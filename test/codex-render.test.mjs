@@ -155,6 +155,22 @@ test("codex parseResult: from a log+JSONL mix, returns only the LAST agent messa
   assert.equal(codex.parseResult(raw), "FINAL ANSWER");
 });
 
+test("delegated runs are isolated from local config (claude --bare, codex --ignore-*)", () => {
+  const c = claude.buildInvocation({
+    taskPrompt: "hi", modelId: "GLM-5.2", baseUrl: "https://b", apiKey: "k",
+    effort: "high", sessionId: "s", resume: false,
+  });
+  assert.ok(c.argv.includes("--bare"), "claude delegate must run bare (no caller hooks/plugins/CLAUDE.md)");
+
+  const x = codex.buildInvocation({
+    taskPrompt: "hi", modelId: "gpt-5-codex", baseUrl: "https://b", apiKey: "k",
+    effort: "high", sessionId: "s", resume: false,
+  });
+  const j = x.argv.join(" ");
+  assert.match(j, /--ignore-user-config/);
+  assert.match(j, /--ignore-rules/);
+});
+
 test("renderModelList marks defaults with *", () => {
   const out = renderModelList([
     {

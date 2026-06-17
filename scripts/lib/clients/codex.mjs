@@ -38,14 +38,16 @@ export default {
       "-c", `model_reasoning_effort="${effort}"`,
     ];
 
-    // --json:让 codex 把事件以 JSONL 打到 stdout,parseResult 取最后的 agent 消息,
-    // 而不是人类可读输出里掺杂的启动/工具日志。
+    // 隔离:--ignore-user-config(不加载 $CODEX_HOME/config.toml)+ --ignore-rules(不加载
+    // 用户/项目 .rules)—— 委派行为只由任务正文 + 所选 provider/model 决定,跨机器一致(SPEC §2.3)。
+    // --json:事件以 JSONL 打到 stdout,parseResult 取最后的 agent 消息(而非掺日志的整段)。
+    const iso = ["--ignore-user-config", "--ignore-rules", "--json", "--skip-git-repo-check"];
     let argv;
     if (resume) {
       // codex exec resume <SESSION_ID> [overrides] <PROMPT>
-      argv = ["exec", "resume", sessionId, "--json", ...providerOverrides, "-m", modelId, "--skip-git-repo-check", taskPrompt];
+      argv = ["exec", "resume", sessionId, ...iso, ...providerOverrides, "-m", modelId, taskPrompt];
     } else {
-      argv = ["exec", "--json", "-m", modelId, ...providerOverrides, "--skip-git-repo-check", taskPrompt];
+      argv = ["exec", ...iso, "-m", modelId, ...providerOverrides, taskPrompt];
     }
 
     const env = {

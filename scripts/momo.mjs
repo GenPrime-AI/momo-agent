@@ -337,7 +337,11 @@ async function cmdRunJob(argv) {
 // 在 thread_key 锁保护下执行整个 client run(含心跳 + 超时兜底)。
 // 同 thread_key 的并发 continue 在此排队,避免线程历史写坏(SPEC §4.3)。
 async function runUnderThreadLock(id, job, exec, client) {
-  const releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: 600_000 });
+  // 排队等同线程锁的时长必须 ≥ 前面 base 任务的最大运行时(其 wall-clock 超时),否则排在
+  // 一个合法的长任务后面的 continue 会在 10min 后让 runner 退出、被误判 crashed。取 job 超时
+  // + 1h 缓冲;锁本身有"持有者死则抢占"的兜底,等久也安全。
+  const lockWaitMs = Math.max((exec.timeout_ms ?? DEFAULT_TIMEOUT_MS) + 3_600_000, 3_600_000);
+  const releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: lockWaitMs });
 
   // 进入锁后(可能已在队列里等了很久)才 queued → running,并把 started_at 重置为真正
   // 开跑时刻 —— 排队期间不计 wall-clock,status 也不会把排队中的 job 误判为卡死/超时。
