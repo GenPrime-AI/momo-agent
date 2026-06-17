@@ -18,22 +18,31 @@ export function isAlive(pid) {
   }
 }
 
-// 进程身份 token:用 `ps -o lstart=`(进程启动时刻)区分"同一 PID 但已被 OS 回收复用"的情况。
-// 记录 pid 时一并存其 token;杀/判活前比对 token,避免裸 PID 复用导致误杀/误判。
+// 进程身份 token:区分"同一 PID 但已被 OS 回收复用"。用 `ps -o lstart=,args=` —— 启动时刻
+// + 完整命令行。对 momo 的 runner,args 含唯一 job-id(node …/momo.mjs __run-job <id>),
+// 因此即便同秒同 PID 复用,只要命令行不同就能区分(抗碰撞)。记录 pid 时一并存其 token。
+// 短重试,避免 ps 偶发失败导致拿不到 token。
 export function procToken(pid) {
   if (!Number.isFinite(pid) || pid <= 0) return null;
-  if (process.platform === "win32") return null; // win 无此机制,退回裸 PID
-  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    stdio: "pipe",
-    windowsHide: true
-  });
-  if (r.error || r.status !== 0) return null;
-  const s = (r.stdout || "").trim();
-  return s || null;
+  if (process.platform === "win32") return null; // win 另案;POSIX 为主
+  for (let i = 0; i < 3; i += 1) {
+    const r = spawnSync("ps", ["-o", "lstart=,args=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: "pipe",
+      windowsHide: true
+    });
+    if (!r.error && r.status === 0) {
+      const s = (r.stdout || "").replace(/\s+/g, " ").trim();
+      if (s) return s;
+    }
+    // 进程不存在 → ps 退出非 0,直接返回 null(无需重试)
+    if (r.status != null && r.status !== 0) return null;
+  }
+  return null;
 }
 
-// 该 pid 是否"仍存活且仍是当初记录的那个进程"。token 为空(旧记录/未及记录)时退回裸 isAlive。
+// crash 检测用(fail-SAFE):pid 是否"仍存活且仍是当初那个进程"。token 缺失时退回裸 isAlive
+// —— 宁可不误判一个活着的进程为 crashed(缺 token 时不主动判死)。
 export function aliveAndOurs(pid, token) {
   if (!isAlive(pid)) return false;
   if (!token) return true;
@@ -41,9 +50,17 @@ export function aliveAndOurs(pid, token) {
   return cur != null && cur === token;
 }
 
-// 仅当 pid 仍是当初那个进程时才杀其进程树(PID 被复用则跳过,绝不误杀无关进程)。
+// 杀/偷锁用(fail-CLOSED):必须**正向验证**是当初那个进程才算 ours。token 缺失或不匹配
+// 一律不认 —— 宁可不杀(避免误杀无关进程)。
+export function verifiedOurs(pid, token) {
+  if (!isAlive(pid) || !token) return false;
+  const cur = procToken(pid);
+  return cur != null && cur === token;
+}
+
+// 仅当**正向验证**为当初那个进程时才杀其进程树(复用/无法验证则跳过,绝不误杀无关进程)。
 export function terminateTreeIfOurs(pid, token, options = {}) {
-  if (!aliveAndOurs(pid, token)) {
+  if (!verifiedOurs(pid, token)) {
     return { attempted: false, delivered: false, method: "skipped" };
   }
   return terminateProcessTree(pid, options);

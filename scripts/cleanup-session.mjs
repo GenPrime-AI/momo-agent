@@ -106,15 +106,16 @@ async function main() {
     const act = activeSessions();
     if (act.length === 1) endId = act[0];
   }
-  if (endId) removeActiveSession(endId);
-
-  // 移除后已无活跃 session(这是最后一个)→ 额外清掉无归属 running job(防泄漏)。
-  const lastSession = activeSessions().length === 0;
+  // "是否最后一个 session" = 除 endId 外已无其它活跃 session(在注销**前**算)。
+  const lastSession = activeSessions().filter((s) => s !== endId).length === 0;
   if (!endId && !lastSession) {
     process.stdout.write("momo cleanup: 无 session id 且有多个活跃 session,跳过(避免误杀)\n");
     return;
   }
+  // 先清理(此时 job 仍能按 session id 被发现),成功后再注销 —— 若 hook 在两步之间崩溃,session
+  // 标记仍在,后续 SessionEnd 仍能据其重新发现并清理,绝不永久泄漏。
   const killed = cleanupSession(endId, { alsoUnowned: lastSession });
+  if (endId) removeActiveSession(endId);
   process.stdout.write(`momo cleanup: 杀掉 ${killed.length} 个 running job\n`);
 }
 

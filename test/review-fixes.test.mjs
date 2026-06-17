@@ -8,6 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+import { procToken } from "../scripts/lib/process.mjs";
+
 import {
   makeHome,
   sampleConfig,
@@ -47,7 +49,9 @@ test("P1: assessJob kills runner+client trees before marking a wedged job timeou
       id,
       status: "running",
       pid: runner, // runner alive (wedged) — NOT dead, so it's the timeout branch, not crashed
+      pid_token: procToken(runner),
       client_pid: client,
+      client_pid_token: procToken(client),
       model: "glm-5.2",
       client: "claude",
       effort: "high",
