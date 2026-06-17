@@ -34,8 +34,8 @@ export default {
       "-c", `model_providers.momo.base_url="${baseUrl}"`,
       "-c", 'model_providers.momo.env_key="MOMO_API_KEY"',
       "-c", `model_providers.momo.wire_api="${wire}"`,
-      "-c", `model_reasoning_effort="${effort}"`,
     ];
+    if (effort) providerOverrides.push("-c", `model_reasoning_effort="${effort}"`); // optional
 
     // Isolation: --ignore-user-config (don't load $CODEX_HOME/config.toml) + --ignore-rules (don't load
     // user/project .rules) — delegated behavior is determined only by the task body + chosen provider/model, consistent across machines.

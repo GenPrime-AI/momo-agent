@@ -29,7 +29,7 @@ export default {
       // Pin a deterministic session id so we can resume later.
       argv.push("--session-id", sessionId);
     }
-    argv.push("--effort", effort);
+    if (effort) argv.push("--effort", effort); // optional: a model may have no effort
     argv.push(taskPrompt);
 
     const env = {

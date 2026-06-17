@@ -60,7 +60,7 @@ function jobLine(job) {
   const parts = [
     job.id,
     statusBadge(job),
-    `${job.model}/${job.client}/${job.effort}`,
+    `${job.model}/${job.client}/${job.effort ?? "-"}`,
     elapsed(job.started_at, job.status === "running" ? null : job.last_heartbeat)
   ];
   return parts.filter(Boolean).join("  ");
@@ -94,7 +94,7 @@ export function renderStatusOne(job) {
     `status:     ${statusBadge(job)}`,
     `model:      ${job.model}`,
     `client:     ${job.client}`,
-    `effort:     ${job.effort}`,
+    `effort:     ${job.effort ?? "-"}`,
     `cwd:        ${job.cwd}`,
     `pid:        ${job.pid ?? "-"}`,
     `started:    ${job.started_at}`,
@@ -134,7 +134,7 @@ export function renderResult(job, resultText) {
 // Dispatch-success message.
 export function renderWorkAccepted(job) {
   return [
-    `Dispatched job ${job.id} in the background (${job.model}/${job.client}/${job.effort}).`,
+    `Dispatched job ${job.id} in the background (${job.model}/${job.client}/${job.effort ?? "-"}).`,
     `Check progress: /momo:status ${job.id}`,
     `Fetch result:   /momo:result ${job.id}`
   ].join("\n");

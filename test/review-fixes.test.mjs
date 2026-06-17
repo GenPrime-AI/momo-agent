@@ -544,6 +544,45 @@ test("cancel refuses a finishing job (client already exited) so the real result 
   }
 });
 
+test("effort is optional: a no-effort model runs; passing --effort to it is rejected", async () => {
+  const h = makeHome();
+  try {
+    const cfg = sampleConfig();
+    cfg.models["noeffort"] = { provider: "zhipu", model_id: "NE-1", clients: ["claude"] }; // no effort key
+    writeConfigFile(h.momoHome, cfg);
+
+    const ok = runMomo(["run", "--model", "noeffort", "--", "x"], {
+      home: h.home,
+      env: { MOCK_RESULT: "ran-without-effort" },
+    });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /ran-without-effort/);
+
+    const bad = runMomo(["run", "--model", "noeffort", "--effort", "high", "--", "x"], { home: h.home });
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /no configured effort|drop --effort/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("config-set accepts a model with no effort (effort is optional)", () => {
+  const h = setup();
+  try {
+    const patch = JSON.stringify({
+      providers: { acme: { protocols: ["anthropic"], base_url: { anthropic: "https://a" }, api_key: "k" } },
+      models: { "acme-x": { provider: "acme", model_id: "AX", clients: ["claude"] } },
+    });
+    const r = runMomo(["config-set", "--json", patch], { home: h.home });
+    assert.equal(r.status, 0, r.stderr);
+    const cfg = JSON.parse(fs.readFileSync(path.join(h.momoHome, "config.json"), "utf8"));
+    assert.ok(cfg.models["acme-x"], "no-effort model must be saved");
+    assert.equal(cfg.models["acme-x"].effort, undefined);
+  } finally {
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());

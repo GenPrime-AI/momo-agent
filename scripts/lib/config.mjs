@@ -315,18 +315,21 @@ export function validateConfig(config) {
         }
       }
     }
-    if (!Array.isArray(model.effort) || model.effort.length === 0) {
-      errors.push(`${tag} must have a non-empty effort array.`);
-    } else if (Array.isArray(model.clients) && model.clients.length) {
-      // At least one effort entry must be legal for at least one known client.
-      const validClients = model.clients.filter((c) => KNOWN_CLIENTS.has(c));
-      const anyLegal = model.effort.some((e) =>
-        validClients.some((c) => CLIENTS[c].allowedEffort.has(e))
-      );
-      if (validClients.length && !anyLegal) {
-        errors.push(
-          `${tag}'s effort list [${model.effort.join(", ")}] has no entry that is legal for any of its clients.`
+    // effort is OPTIONAL: most third-party models have no effort/thinking control. If present it must be
+    // an array; if non-empty, at least one entry must be legal for one of the model's clients.
+    if (model.effort !== undefined) {
+      if (!Array.isArray(model.effort)) {
+        errors.push(`${tag}'s effort, if present, must be an array.`);
+      } else if (model.effort.length && Array.isArray(model.clients) && model.clients.length) {
+        const validClients = model.clients.filter((c) => KNOWN_CLIENTS.has(c));
+        const anyLegal = model.effort.some((e) =>
+          validClients.some((c) => CLIENTS[c].allowedEffort.has(e))
         );
+        if (validClients.length && !anyLegal) {
+          errors.push(
+            `${tag}'s effort list [${model.effort.join(", ")}] has no entry that is legal for any of its clients.`
+          );
+        }
       }
     }
   }

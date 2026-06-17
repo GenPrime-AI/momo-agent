@@ -218,26 +218,35 @@ export function resolve(config, opts = {}) {
     );
   }
 
-  // §8.5 — resolve effort
+  // §8.5 — resolve effort (OPTIONAL: a model may declare no effort, e.g. providers with no thinking control)
+  const hasEffort = Array.isArray(modelDef.effort) && modelDef.effort.length > 0;
   let effort = opts.effort;
   if (effort) {
-    const inModel = Array.isArray(modelDef.effort) && modelDef.effort.includes(effort);
+    if (!hasEffort) {
+      throw new ResolveError(
+        "effort-unsupported",
+        `model "${model}" has no configured effort; drop --effort (this model exposes no effort/thinking control).`
+      );
+    }
+    const inModel = modelDef.effort.includes(effort);
     const legalForClient = adapter.allowedEffort.has(effort);
     if (!inModel || !legalForClient) {
-      const legal = (modelDef.effort || []).filter((e) => adapter.allowedEffort.has(e));
+      const legal = modelDef.effort.filter((e) => adapter.allowedEffort.has(e));
       throw new ResolveError(
         "effort-invalid",
         `effort "${effort}" is invalid for model "${model}" + client "${client}". Valid values: ${legal.length ? legal.join(", ") : "(none — model " + model + "'s effort list has no valid entry for client " + client + ")"}.`
       );
     }
-  } else {
+  } else if (hasEffort) {
     effort = defaultEffortForClient(modelDef, client);
     if (!effort) {
       throw new ResolveError(
         "effort-missing",
-        `None of the entries in model "${model}"'s effort list [${(modelDef.effort || []).join(", ")}] is valid for client "${client}".`
+        `None of the entries in model "${model}"'s effort list [${modelDef.effort.join(", ")}] is valid for client "${client}".`
       );
     }
+  } else {
+    effort = null; // model has no effort
   }
 
   // §8.6 — provider api_key / base_url present

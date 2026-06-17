@@ -176,6 +176,20 @@ test("delegated runs are isolated from local config (claude --bare, codex --igno
   assert.match(j, /--ignore-rules/);
 });
 
+test("buildInvocation omits effort when the model has none (effort optional)", () => {
+  const c = claude.buildInvocation({
+    taskPrompt: "x", modelId: "M", baseUrl: "https://b", apiKey: "k",
+    effort: null, sessionId: "s", resume: false,
+  });
+  assert.equal(c.argv.includes("--effort"), false, "claude must not pass --effort when there is none");
+
+  const x = codex.buildInvocation({
+    taskPrompt: "x", modelId: "M", baseUrl: "https://b", apiKey: "k",
+    effort: null, sessionId: "s", resume: false,
+  });
+  assert.doesNotMatch(x.argv.join(" "), /model_reasoning_effort/, "codex must not set effort when there is none");
+});
+
 test("renderModelList marks defaults with *", () => {
   const out = renderModelList([
     {
