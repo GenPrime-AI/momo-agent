@@ -9,18 +9,18 @@ export default {
   protocol: "anthropic",
   allowedEffort: new Set(["low", "medium", "high", "xhigh", "max"]),
   supportsResume: true,
-  // 会话 id 在 work 创建时就用 --session-id 钉死,完成前即可知 → continue 可排队在
-  // 仍在运行的 base 后面(靠 thread 锁串行),不必等 base 完成。
+  // The session id is pinned via --session-id when the work is created, so it's known before completion → continue can queue
+  // behind a still-running base (serialized by the thread lock) without waiting for base to finish.
   sessionIdStable: true,
 
   // Pure: returns { command, argv, env, files }.
   // - env: vars to set/unset for the child. A value of `null` means UNSET.
   // - files: temp config files to drop to disk first (none for claude).
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume }) {
-    // --bare:最小模式,跳过调用方的 hooks/插件/CLAUDE.md/skills/settings/MCP —— 委派子进程
-    // 只看到任务正文 + 自己的线程历史,也避免重入 momo 自己的 SessionStart/End 钩子。
-    // --dangerously-skip-permissions:委派是 headless 后台,没人点权限弹窗;默认 bypass 让它能自主
-    // 在工作目录(建议用隔离 worktree)读写文件、跑工具,否则一遇权限请求就永久卡住。
+    // --bare: minimal mode, skips the caller's hooks/plugins/CLAUDE.md/skills/settings/MCP — the delegated subprocess
+    // only sees the task body + its own thread history, and avoids re-entering momo's own SessionStart/End hooks.
+    // --dangerously-skip-permissions: delegation is a headless background job, no one to click permission prompts; bypass by default lets it
+    // autonomously read/write files and run tools in the working directory (recommended: an isolated worktree), else it hangs forever on the first permission request.
     const argv = ["-p", "--bare", "--dangerously-skip-permissions", "--output-format", "json"];
     if (resume) {
       // Resume an existing thread by its claude session id.

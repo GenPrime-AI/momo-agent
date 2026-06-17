@@ -74,7 +74,7 @@ test("run (foreground): non-zero client exit -> non-zero status + friendly error
       env: { MOCK_BEHAVIOR: "authfail" },
     });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /鉴权/);
+    assert.match(r.stderr, /authentication/);
     assert.equal(listJobIds(h.momoHome).length, 0);
   } finally {
     h.cleanup();
@@ -107,7 +107,7 @@ test("authfail stderr maps to an auth-friendly error", async () => {
     const id = parseJobId(r.stdout);
     const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
     assert.equal(job.status, "failed");
-    assert.match(job.error, /鉴权/);
+    assert.match(job.error, /authentication/);
   } finally {
     h.cleanup();
   }
@@ -123,7 +123,7 @@ test("netfail stderr maps to a connectivity-friendly error", async () => {
     const id = parseJobId(r.stdout);
     const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
     assert.equal(job.status, "failed");
-    assert.match(job.error, /网络/);
+    assert.match(job.error, /network/);
   } finally {
     h.cleanup();
   }
@@ -202,7 +202,7 @@ test("timeout: client hangs forever -> runner wall-clock kills it -> status=time
       { timeoutMs: 12000 }
     );
     assert.equal(job.status, "timeout", `expected timeout, got ${job && job.status}`);
-    assert.match(job.error || "", /超时/);
+    assert.match(job.error || "", /timeout/);
   } finally {
     h.cleanup();
   }

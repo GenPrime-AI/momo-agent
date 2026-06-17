@@ -125,7 +125,7 @@ export function listJobIds(momoHome) {
     .map((n) => n.slice(0, -5));
 }
 
-// Extract a printed job-id from work/continue stdout ("已后台派发 job <id>(...)").
+// Extract a printed job-id from work/continue stdout (e.g. "dispatched job <id> ...").
 export function parseJobId(stdout) {
   const m = stdout.match(/job\s+([^\s(]+)/);
   return m ? m[1] : null;

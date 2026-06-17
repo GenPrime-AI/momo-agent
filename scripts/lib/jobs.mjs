@@ -1,6 +1,6 @@
-// Job 状态层:CRUD + 存活判定+ 心跳。
-// 每个 job 一个 ~/.momo/jobs/<id>.json 文件 + 同名 .log。
-// job 文件本身就是事实来源(无中央 state.json),避免并发写盘冲突。
+// Job state layer: CRUD + liveness checks + heartbeat.
+// Each job has one ~/.momo/jobs/<id>.json file + a same-named .log.
+// The job file itself is the source of truth (no central state.json), avoiding concurrent write conflicts.
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,20 +9,20 @@ import path from "node:path";
 import { aliveAndOurs, terminateTreeIfOurs, verifiedOurs } from "./process.mjs";
 import { withLock } from "./lock.mjs";
 
-// 与 config.mjs 一致:MOMO_HOME 环境变量优先(测试/隔离安装/wrapper 用),否则 ~/.momo。
-// 三处(config/jobs/lock)必须对齐,否则 config 与 job/log/锁 落在不同树,status/result/清理读不到。
+// Consistent with config.mjs: the MOMO_HOME env var takes precedence (used by tests/isolated installs/wrappers), otherwise ~/.momo.
+// All three (config/jobs/lock) must align, otherwise config and the job/log/lock end up in different trees and status/result/cleanup can't read them.
 const MOMO_HOME = process.env.MOMO_HOME || path.join(os.homedir(), ".momo");
 const JOBS_DIR = path.join(MOMO_HOME, "jobs");
 const ACTIVE_SESSIONS_FILE = path.join(MOMO_HOME, "active-sessions.json");
 const SEQ_FILE = path.join(MOMO_HOME, "seq");
 
-export const HEARTBEAT_INTERVAL_MS = 5_000; // runner 心跳间隔(≤5s)
-export const HEARTBEAT_STALE_MS = 30_000; // 超此无心跳 → 疑似卡死
-export const DEFAULT_TIMEOUT_MS = 600_000; // wall-clock 兜底上限
+export const HEARTBEAT_INTERVAL_MS = 5_000; // runner heartbeat interval (≤5s)
+export const HEARTBEAT_STALE_MS = 30_000; // no heartbeat beyond this → suspected stuck
+export const DEFAULT_TIMEOUT_MS = 600_000; // wall-clock fallback upper bound
 
-// 终态集合
+// Terminal state set
 const TERMINAL = new Set(["done", "failed", "timeout", "killed", "crashed"]);
-// 活动(未终态)状态:queued(已派发、排队等 thread 锁)+ running(真正在跑 client)。
+// Active (non-terminal) states: queued (dispatched, waiting for the thread lock) + running (actually running the client).
 const ACTIVE = new Set(["queued", "running"]);
 
 export function nowIso() {
@@ -41,13 +41,14 @@ export function ensureJobsDir() {
   fs.mkdirSync(JOBS_DIR, { recursive: true });
 }
 
-// ——— 活跃 session 注册表 ———
-// SessionStart 把 session id 加入集合,SessionEnd 移除。命令子进程拿不到自己的
-// session id(平台不注入 env),work 记录 claude_session 时只在**恰好一个活跃 session**
-// 时才归属它(单 session 安全);多个活跃 session 时不猜(返回 null),避免归错 session
-// 而被另一个 SessionEnd 误杀。RMW 在锁内做,防并发 Start/End 竞争。
-// 条目格式 { id, at(ISO) }。带 TTL 自愈:过期项在每次写入与读取时被剔除 —— 即便某个
-// SessionEnd 没能移除自己(如退化路径下 stdin 无 id),陈旧条目也不会永久堆积、卡住 lastSession。
+// ——— Active session registry ———
+// SessionStart adds the session id to the set, SessionEnd removes it. A command subprocess can't get its own
+// session id (the platform doesn't inject env), so when work records claude_session it only attributes the job
+// when there is **exactly one active session** (safe for single-session); with multiple active sessions it doesn't guess
+// (returns null), to avoid attributing to the wrong session and being mistakenly killed by another SessionEnd. RMW is done
+// inside the lock to prevent concurrent Start/End races.
+// Entry format { id, at(ISO) }. Self-healing via TTL: expired entries are dropped on every write and read — so even if some
+// SessionEnd fails to remove itself (e.g. on a degraded path with no id in stdin), stale entries won't pile up forever and stall lastSession.
 const ACTIVE_SESSION_TTL_MS = 48 * 60 * 60 * 1000;
 
 function readRawActiveSessions() {
@@ -100,7 +101,7 @@ export function removeActiveSession(sessionId) {
   });
 }
 
-// 恰好一个活跃 session → 返回它;否则 null(0 个或并发多个都不猜)。
+// Exactly one active session → return it; otherwise null (don't guess for 0 or multiple concurrent).
 export function soleActiveSession() {
   const active = activeIds();
   return active.length === 1 ? active[0] : null;
@@ -114,7 +115,7 @@ export function jobLogFile(id) {
   return path.join(JOBS_DIR, `${id}.log`);
 }
 
-// 全局单调递增序号(提交顺序)。同线程的 FIFO 排队据此判断"谁更早提交"。锁内 read-inc-write。
+// Globally monotonic increasing sequence number (submission order). FIFO queuing on the same thread uses this to determine "who submitted earlier". read-inc-write inside the lock.
 export function nextSeq() {
   return withLock("seq", () => {
     let n = 0;
@@ -132,17 +133,17 @@ export function nextSeq() {
   });
 }
 
-// 执行是否"仍在进行"(可安全 cancel/cleanup 抢占)。
-//  - 已起 client 且 client 仍存活 → 仍在跑,可抢占(claim killed + 杀)。
-//  - 已起 client 但 client 已退出 → 任务其实已结束,runner 正在 close→finalize 收尾写真实结果
-//    (done/failed)→ **不可**抢占,否则 killed 会吸收掉刚完成的 done,丢结果。
-//  - 还没起 client(queued)→ 没有已完成的结果可丢,可抢占。
+// Whether execution is "still in progress" (safe for cancel/cleanup to preempt).
+//  - client already started and still alive → still running, can preempt (claim killed + kill).
+//  - client already started but already exited → the task has actually finished, the runner is in close→finalize writing the real result
+//    (done/failed) → **cannot** preempt, otherwise killed would absorb the just-completed done and lose the result.
+//  - client not started yet (queued) → no completed result to lose, can preempt.
 export function executionStillLive(job) {
   if (job.client_pid) return verifiedOurs(job.client_pid, job.client_pid_token);
   return true;
 }
 
-// 同线程上是否还有"更早提交(seq 更小)且未终态"的 job —— FIFO 判断用。
+// Whether the same thread still has a job "submitted earlier (smaller seq) and not yet terminal" — used for the FIFO check.
 export function earlierActiveOnThread(threadKeyVal, seq, selfId) {
   if (!Number.isFinite(seq)) return false;
   return listJobs().some(
@@ -155,27 +156,27 @@ export function earlierActiveOnThread(threadKeyVal, seq, selfId) {
   );
 }
 
-// thread_key = sha1(cwd|model|client),用于 resume 与同线程串行锁。
+// thread_key = sha1(cwd|model|client), used for resume and the same-thread serialization lock.
 export function threadKey(cwd, model, client) {
   return createHash("sha1").update(`${cwd}|${model}|${client}`).digest("hex").slice(0, 16);
 }
 
-// job-id = 人可读前缀(model)+ 随机后缀,全局唯一。
-// 用 4 字节(32 位)熵,并校验同名 job 文件不存在(碰撞则重抽),避免覆盖旧 job 的
-// .json/.log 导致 status/result 错乱。
+// job-id = human-readable prefix (model) + random suffix, globally unique.
+// Uses 4 bytes (32 bits) of entropy and verifies no same-named job file exists (re-draw on collision), to avoid overwriting an old job's
+// .json/.log and corrupting status/result.
 export function generateJobId(model) {
   const prefix = String(model).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "job";
   for (let i = 0; i < 50; i++) {
     const id = `${prefix}-${randomBytes(4).toString("hex")}`;
     if (!fs.existsSync(jobFile(id))) return id;
   }
-  // 极端情况(几乎不可能):加更长后缀兜底
+  // Extreme case (nearly impossible): fall back to a longer suffix
   return `${prefix}-${randomBytes(8).toString("hex")}`;
 }
 
-// 原子写:tmp + rename。**私有** —— 任何 job 状态变更都必须经下面的状态机 API
+// Atomic write: tmp + rename. **Private** — any job state change must go through the state-machine API below
 // (createRunningJob / markRunning / backfill=patchIfActive / heartbeat / finalizeJob),
-// 它们统一走 transition() 加锁 + 终态吸收。模块外不得裸写 job 状态。
+// all of which go through transition() for locking + terminal-state absorption. No raw job-state writes from outside the module.
 function writeJob(record) {
   ensureJobsDir();
   const file = jobFile(record.id);
@@ -213,7 +214,7 @@ export function listJobs() {
   return jobs.sort((a, b) => String(b.started_at ?? "").localeCompare(String(a.started_at ?? "")));
 }
 
-// job id 解析:精确 → 唯一前缀。歧义/找不到抛错。
+// job id resolution: exact → unique prefix. Throws on ambiguity / not found.
 export function resolveJobRef(reference, predicate = () => true) {
   const jobs = listJobs().filter(predicate);
   if (!reference) {
@@ -228,13 +229,13 @@ export function resolveJobRef(reference, predicate = () => true) {
     return matches[0];
   }
   if (matches.length > 1) {
-    throw new Error(`job 引用 "${reference}" 不唯一,请用更长的 job-id`);
+    throw new Error(`job reference "${reference}" is not unique, please use a longer job-id`);
   }
   return null;
 }
 
-// 创建初始记录,状态为 **queued**(已派发、等 thread 锁)。__run-job 拿到锁、真正开跑
-// 时再 markRunning() 翻成 running 并把 started_at 重置为开跑时刻 —— 排队期间不计 wall-clock。
+// Create the initial record in the **queued** state (dispatched, waiting for the thread lock). When __run-job acquires the lock and actually
+// starts, markRunning() flips it to running and resets started_at to the start moment — wall-clock isn't counted during queuing.
 export function createRunningJob({
   id,
   pid,
@@ -247,7 +248,7 @@ export function createRunningJob({
   cwd,
   timeout_ms = DEFAULT_TIMEOUT_MS,
   seq = null,
-  // 后端身份(durable):continue 用这些锁定原始 backend,免受 model 别名后续重映射影响。
+  // Backend identity (durable): continue uses these to lock onto the original backend, immune to later remapping of the model alias.
   provider = null,
   model_id = null,
   protocol = null,
@@ -282,23 +283,23 @@ export function createRunningJob({
   return record;
 }
 
-// 每个 job 一把锁,序列化"状态转移"的读-改-写。
+// One lock per job, serializing the read-modify-write of "state transitions".
 function jobLockName(id) {
   return `job-${id}`;
 }
 
-// ───────────────────────── 状态机唯一写入口 ─────────────────────────
-// 所有 job 状态变更必经此处。不变量(结构上保证,无需各调用点自觉):
-//   1) 锁内读-改-写:同一 job 的并发变更串行,杜绝陈旧覆盖。
-//   2) 终态吸收:job 一旦进入终态(done/failed/timeout/killed/crashed),任何后续 transition
-//      都原样返回、不再改动 —— 第一个置终态的赢,cancel 不会被迟到的 finalize 复活。
-//   3) apply(cur) 返回新记录则写,返回 null 则不写。
-// 唯一例外是 createRunningJob(创建,无前态),它是 job 的第一次写。
+// ───────────────────────── Sole write entry point for the state machine ─────────────────────────
+// All job state changes must go through here. Invariants (structurally guaranteed, no discipline needed at each call site):
+//   1) Read-modify-write inside the lock: concurrent changes to the same job are serialized, eliminating stale overwrites.
+//   2) Terminal-state absorption: once a job enters a terminal state (done/failed/timeout/killed/crashed), any subsequent transition
+//      returns it as-is without modification — the first to set a terminal state wins, and cancel won't be revived by a late finalize.
+//   3) If apply(cur) returns a new record, write it; if it returns null, don't write.
+// The only exception is createRunningJob (creation, no prior state), which is the job's first write.
 function transition(id, apply) {
   return withLock(jobLockName(id), () => {
     const cur = readJob(id);
     if (!cur) return null;
-    if (isTerminal(cur.status)) return cur; // 终态吸收
+    if (isTerminal(cur.status)) return cur; // terminal-state absorption
     const next = apply(cur);
     if (!next) return cur;
     writeJob(next);
@@ -306,8 +307,8 @@ function transition(id, apply) {
   });
 }
 
-// queued → running:进入 thread 锁、真正开跑时调用,把 started_at/last_heartbeat 重置为
-// 开跑时刻(排队等锁的时间不计入 wall-clock)。已终态(排队中被 cancel)则不翻。
+// queued → running: called when entering the thread lock and actually starting, resetting started_at/last_heartbeat to
+// the start moment (time spent queuing for the lock isn't counted in wall-clock). Doesn't flip if already terminal (canceled while queued).
 export function markRunning(id) {
   return transition(id, (cur) => {
     const ts = nowIso();
@@ -315,19 +316,19 @@ export function markRunning(id) {
   });
 }
 
-// 非终态字段 backfill(pid / client_pid 等):活动态才写,终态不复活。
+// Backfill non-terminal fields (pid / client_pid etc.): only written in active state, terminal states aren't revived.
 export function patchIfActive(id, patch) {
   return transition(id, (cur) => ({ ...cur, ...patch }));
 }
 
-// runner 周期心跳:活动态才更新 last_heartbeat,终态不复活。
+// Periodic runner heartbeat: only updates last_heartbeat in active state, terminal states aren't revived.
 export function heartbeat(id) {
   return transition(id, (cur) => ({ ...cur, last_heartbeat: nowIso() }));
 }
 
-// 置终态(runner 收尾 / cancel / cleanup / assess 超时·crashed 的唯一入口)。
-// 并**剥离 _exec**(含运行参数与敏感字段,不长期保留)。终态吸收由 transition 保证。
-// patch 可带 status/exit_code/error/session_id/result_text。
+// Set terminal state (the sole entry point for runner wrap-up / cancel / cleanup / assess timeout·crashed).
+// Also **strips _exec** (which holds run parameters and sensitive fields, not retained long-term). Terminal-state absorption is guaranteed by transition.
+// patch may carry status/exit_code/error/session_id/result_text.
 export function finalizeJob(id, patch = {}) {
   return transition(id, (cur) => {
     const { _exec, ...rest } = cur;
@@ -335,24 +336,24 @@ export function finalizeJob(id, patch = {}) {
   });
 }
 
-// 存活判定——三招叠加,返回判定后的 view(可能写回 crashed/timeout)。
-// 不改 done/failed/killed 等已写好的终态。
+// Liveness check — three layered tactics, returns the assessed view (may write back crashed/timeout).
+// Doesn't touch already-written terminal states like done/failed/killed.
 export function assessJob(job, opts = {}) {
   const now = opts.now ?? Date.now();
-  // 已是终态:直接返回,附带 staleness 信息便于渲染
+  // Already terminal: return directly, with staleness info attached for rendering
   if (isTerminal(job.status)) {
     return { ...job, suspectedStuck: false };
   }
 
-  // queued:在等 thread 锁,**不计 wall-clock 超时**(还没开跑)。
-  // 只有在 runner pid 已**真正回填**(pid>0 且有身份)却不再存活时,才判 crashed —— 否则
-  // pid 仍是占位 0(刚创建、runner 还没 backfill)会被并发 status 误判 crashed、丢掉合法 job。
+  // queued: waiting for the thread lock, **no wall-clock timeout** (hasn't started yet).
+  // Only judge crashed when the runner pid has been **truly backfilled** (pid>0 with identity) yet is no longer alive — otherwise
+  // a pid still at placeholder 0 (just created, runner hasn't backfilled) would be misjudged crashed by a concurrent status and a valid job lost.
   if (job.status === "queued") {
     if (job.pid > 0 && !aliveAndOurs(job.pid, job.pid_token)) {
       terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
       const updated = finalizeJob(job.id, {
         status: "crashed",
-        error: job.error ?? "排队中进程退出(疑似硬崩)"
+        error: job.error ?? "process exited while queued (suspected hard crash)"
       });
       return { ...(updated ?? job), suspectedStuck: false };
     }
@@ -363,9 +364,9 @@ export function assessJob(job, opts = {}) {
     return { ...job, suspectedStuck: false };
   }
 
-  // 1. wall-clock 超时兜底:runner 没自杀(可能 runner 自身也卡死/挂了)→ 标 timeout。
-  // 关键:置终态前**先杀进程树**(runner + client 两个独立进程组),否则 runner 卡死时
-  // 我们把 job 标成终态、清掉 pid,client 仍在后台跑且 job 已不可 cancel → 孤儿。
+  // 1. wall-clock timeout fallback: runner didn't kill itself (maybe the runner is itself stuck/dead) → mark timeout.
+  // Key: **kill the process tree first** before setting terminal state (runner + client, two independent process groups), otherwise when the runner is stuck
+  // we mark the job terminal and clear pid while the client keeps running in the background and the job can no longer be canceled → orphan.
   const startedMs = Date.parse(job.started_at ?? "");
   const timeoutMs = Number.isFinite(job.timeout_ms) ? job.timeout_ms : DEFAULT_TIMEOUT_MS;
   if (Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
@@ -373,47 +374,47 @@ export function assessJob(job, opts = {}) {
     terminateTreeIfOurs(job.pid, job.pid_token, { signal: "SIGKILL" });
     const updated = finalizeJob(job.id, {
       status: "timeout",
-      error: job.error ?? `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s),已杀进程树`
+      error: job.error ?? `wall-clock timeout (>${Math.round(timeoutMs / 1000)}s), process tree killed`
     });
     return { ...(updated ?? job), suspectedStuck: false };
   }
 
-  // 2. pid 探活:status==running 但 runner 进程已死(或 PID 被复用,非当初那个)→ crashed。
-  // runner 死了但 client 可能仍存活(被孤立)→ 一并(验身份后)杀掉 client 子树,杜绝孤儿。
+  // 2. pid liveness probe: status==running but the runner process is dead (or the PID was reused, not the original one) → crashed.
+  // The runner is dead but the client may still be alive (orphaned) → also kill the client subtree (after verifying identity) to eliminate orphans.
   if (!aliveAndOurs(job.pid, job.pid_token)) {
     terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
     const updated = finalizeJob(job.id, {
       status: "crashed",
-      error: job.error ?? "进程已退出但未写终态(疑似硬崩)"
+      error: job.error ?? "process exited but no terminal state was written (suspected hard crash)"
     });
     return { ...(updated ?? job), suspectedStuck: false };
   }
 
-  // 3. 心跳新鲜度:超阈值没动 → 标"疑似卡死"(不改 status,仅提示可 cancel)
+  // 3. Heartbeat freshness: no movement beyond the threshold → mark "suspected stuck" (doesn't change status, just hints it can be canceled)
   const hbMs = Date.parse(job.last_heartbeat ?? job.started_at ?? "");
   const suspectedStuck = Number.isFinite(hbMs) && now - hbMs > HEARTBEAT_STALE_MS;
   return { ...job, suspectedStuck };
 }
 
-// 取活动 job(queued/running),做完存活判定后仍活动的。
+// Get active jobs (queued/running) that are still active after the liveness check.
 export function listActiveJobs() {
   return listJobs()
     .map((j) => assessJob(j))
     .filter((j) => isActive(j.status));
 }
 
-// 按 claude_session 取活动(queued/running)job(SessionEnd 清理用)。
+// Get active (queued/running) jobs by claude_session (used by SessionEnd cleanup).
 export function listRunningBySession(claudeSession) {
   return listJobs().filter((j) => isActive(j.status) && j.claude_session === claudeSession);
 }
 
-// 无归属(claude_session 为空)的活动 job —— 当最后一个活跃 session 结束、
-// 已无 session 能认领它们时,SessionEnd 据此清掉,避免泄漏。
+// Unowned active jobs (claude_session is empty) — when the last active session ends
+// and no session can claim them, SessionEnd uses this to clean them up and avoid leaks.
 export function listRunningUnowned() {
   return listJobs().filter((j) => isActive(j.status) && !j.claude_session);
 }
 
-// 当前活跃 session 列表(SessionEnd 判断"是否最后一个"用),已按 TTL 自愈过滤。
+// Current list of active sessions (used by SessionEnd to decide "is this the last one"), already self-healed by TTL filtering.
 export function activeSessions() {
   return activeIds();
 }

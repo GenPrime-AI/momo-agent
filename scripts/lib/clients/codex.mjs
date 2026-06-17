@@ -17,16 +17,16 @@ export default {
   protocol: "openai",
   allowedEffort: new Set(["none", "minimal", "low", "medium", "high", "xhigh"]),
   supportsResume: true,
-  // codex 真实可 resume 的会话 id 要解析子进程输出后才知 → 只能续接已完成的 base。
+  // codex's actual resumable session id is only known after parsing subprocess output → can only continue from a completed base.
   sessionIdStable: false,
 
   // Pure: returns { command, argv, env, files }.
-  //   wireApi: openai 兼容端点的协议类型。普通 OpenAI 兼容(如 GLM /paas/v4)用
-  //   "chat"(Chat Completions);codex-native 模型(gpt-5-codex)需 "responses"。
-  //   未指定时默认 "chat"。由 model/provider 的可选 wire_api 字段驱动(resolve 透传)。
+  //   wireApi: protocol type of the OpenAI-compatible endpoint. Plain OpenAI-compatible (e.g. GLM /paas/v4) uses
+  //   "chat" (Chat Completions); codex-native models (gpt-5-codex) need "responses".
+  //   Defaults to "chat" when unspecified. Driven by the optional wire_api field on the model/provider (passed through by resolve).
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi }) {
-    // 显式 wireApi 优先;否则按 model 自动判定:codex-native 模型(名字含 codex,
-    // 如 gpt-5-codex)走 "responses",普通 OpenAI 兼容端点走 "chat"。
+    // Explicit wireApi wins; otherwise auto-detect by model: codex-native models (name contains codex,
+    // e.g. gpt-5-codex) use "responses", plain OpenAI-compatible endpoints use "chat".
     const wire = wireApi || (/codex/i.test(String(modelId)) ? "responses" : "chat");
     const providerOverrides = [
       "-c", 'model_provider="momo"',
@@ -37,11 +37,11 @@ export default {
       "-c", `model_reasoning_effort="${effort}"`,
     ];
 
-    // 隔离:--ignore-user-config(不加载 $CODEX_HOME/config.toml)+ --ignore-rules(不加载
-    // 用户/项目 .rules)—— 委派行为只由任务正文 + 所选 provider/model 决定,跨机器一致。
-    // --json:事件以 JSONL 打到 stdout,parseResult 取最后的 agent 消息(而非掺日志的整段)。
-    // --dangerously-bypass-approvals-and-sandbox:委派 headless,无人批准;默认 bypass 让 codex 能
-    // 自主执行/读写(建议在隔离 worktree)。与 claude 适配器的 --dangerously-skip-permissions 对齐。
+    // Isolation: --ignore-user-config (don't load $CODEX_HOME/config.toml) + --ignore-rules (don't load
+    // user/project .rules) — delegated behavior is determined only by the task body + chosen provider/model, consistent across machines.
+    // --json: events are written as JSONL to stdout, parseResult takes the last agent message (not the whole log-mixed blob).
+    // --dangerously-bypass-approvals-and-sandbox: delegation is headless, no one to approve; bypass by default lets codex
+    // execute/read/write autonomously (recommended in an isolated worktree). Aligned with the claude adapter's --dangerously-skip-permissions.
     const iso = [
       "--ignore-user-config",
       "--ignore-rules",
@@ -51,8 +51,8 @@ export default {
     ];
     let argv;
     if (resume) {
-      // 形态:codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
-      // 选项(含 -c provider 覆盖、-m)必须在 SESSION_ID 之前,否则会被当成位置参数误解析。
+      // Form: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+      // Options (including -c provider overrides and -m) must come before SESSION_ID, else they're misparsed as positional args.
       argv = ["exec", "resume", ...iso, ...providerOverrides, "-m", modelId, sessionId, taskPrompt];
     } else {
       argv = ["exec", ...iso, "-m", modelId, ...providerOverrides, taskPrompt];
@@ -126,10 +126,10 @@ function tryParse(s) {
 }
 
 // Extract assistant text from a codex JSONL event object (best-effort across shapes).
-// 真实 codex --json 事件形态多变,常见:
+// Real codex --json event shapes vary; common ones:
 //   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
 //   {"msg":{"type":"agent_message","message":"..."}}
-// 因此在 obj / obj.msg / obj.item 三处都尝试取文本。
+// So we try to extract text from all three: obj / obj.msg / obj.item.
 function jsonEventText(obj) {
   const carriers = [obj.msg, obj.item, obj].filter((c) => c && typeof c === "object");
   for (const c of carriers) {

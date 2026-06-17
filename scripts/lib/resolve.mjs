@@ -80,38 +80,40 @@ function isExecutable(p) {
   }
 }
 
-// /momo:continue 专用:用 job 持久化的**原始后端身份**(provider/model_id/protocol/client/
-// effort/wire_api)重建执行上下文,只把 api_key/base_url 取**当前**值(允许凭证轮换)。
-// 不经 model 别名 → 即便 model 名后来被重指到别的 model_id/provider,老线程仍 resume 到原 backend。
+// /momo:continue only: rebuild the execution context from the job's persisted **original backend
+// identity** (provider/model_id/protocol/client/effort/wire_api), taking only api_key/base_url at
+// their **current** values (allows credential rotation).
+// Bypasses the model alias → even if the model name is later repointed to a different
+// model_id/provider, the old thread still resumes against the original backend.
 export function resolveForContinue(config, base, opts = {}) {
   const env = opts.env || process.env;
   const cwd = base.cwd ? path.resolve(base.cwd) : process.cwd();
 
   const provider = getProvider(config, base.provider);
   if (!provider) {
-    throw new ResolveError("provider-missing", `原 job 的 provider "${base.provider}" 已不存在,无法续接。`);
+    throw new ResolveError("provider-missing", `The original job's provider "${base.provider}" no longer exists; cannot continue.`);
   }
   const adapter = getClient(base.client);
   if (!adapter) {
-    throw new ResolveError("client-invalid", `原 job 的 client "${base.client}" 不可用。`);
+    throw new ResolveError("client-invalid", `The original job's client "${base.client}" is unavailable.`);
   }
   const protocol = base.protocol ?? adapter.protocol;
   if (!Array.isArray(provider.protocols) || !provider.protocols.includes(protocol)) {
-    throw new ResolveError("protocol-incompatible", `provider "${base.provider}" 不再支持协议 "${protocol}",无法续接。`);
+    throw new ResolveError("protocol-incompatible", `provider "${base.provider}" no longer supports protocol "${protocol}"; cannot continue.`);
   }
   const binaryPath = resolveBinary(base.client, env);
   if (!binaryPath) {
-    throw new ResolveError("client-not-installed", `client "${base.client}" 未安装,无法续接。`);
+    throw new ResolveError("client-not-installed", `client "${base.client}" is not installed; cannot continue.`);
   }
   if (base.effort && !adapter.allowedEffort.has(base.effort)) {
-    throw new ResolveError("effort-invalid", `effort "${base.effort}" 对 client "${base.client}" 非法。`);
+    throw new ResolveError("effort-invalid", `effort "${base.effort}" is invalid for client "${base.client}".`);
   }
   const baseUrl = provider.base_url && provider.base_url[protocol];
   if (!baseUrl) {
-    throw new ResolveError("base-url-missing", `provider "${base.provider}" 缺少 ${protocol} 协议的 base_url。`);
+    throw new ResolveError("base-url-missing", `provider "${base.provider}" is missing a base_url for the ${protocol} protocol.`);
   }
   if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
-    throw new ResolveError("api-key-missing", `provider "${base.provider}" 缺少 api_key。`);
+    throw new ResolveError("api-key-missing", `provider "${base.provider}" is missing api_key.`);
   }
 
   return {
@@ -143,7 +145,7 @@ export function resolve(config, opts = {}) {
   // §8.1 — --model missing
   const model = opts.model;
   if (!model || typeof model !== "string" || model.trim() === "") {
-    throw new ResolveError("model-missing", "缺少 --model。请用 --model <name> 指定模型。");
+    throw new ResolveError("model-missing", "Missing --model. Specify a model with --model <name>.");
   }
 
   // §8.2 — model not in config
@@ -152,7 +154,7 @@ export function resolve(config, opts = {}) {
     const known = listModels(config);
     throw new ResolveError(
       "model-unknown",
-      `未知 model "${model}"。已知 model:${known.length ? known.join(", ") : "(无,请先 /momo:config)"}。`
+      `Unknown model "${model}". Known models: ${known.length ? known.join(", ") : "(none — run /momo:config first)"}.`
     );
   }
 
@@ -161,7 +163,7 @@ export function resolve(config, opts = {}) {
   if (!provider) {
     throw new ResolveError(
       "provider-missing",
-      `model "${model}" 引用的 provider "${providerName}" 不存在。请检查配置或 /momo:config。`
+      `The provider "${providerName}" referenced by model "${model}" does not exist. Check your config or run /momo:config.`
     );
   }
 
@@ -173,24 +175,24 @@ export function resolve(config, opts = {}) {
       const avail = compatibleClients(config, model);
       let why;
       if (check.reason === "not-in-model-clients") {
-        why = `client "${client}" 不在 model "${model}" 的 clients 列表里`;
+        why = `client "${client}" is not in model "${model}"'s clients list`;
       } else if (check.reason === "unknown-client") {
-        why = `未知 client "${client}"`;
+        why = `unknown client "${client}"`;
       } else if (check.reason === "protocol-incompatible") {
         const adapter = getClient(client);
-        why = `client "${client}" 说 ${adapter ? adapter.protocol : "?"} 协议,与 provider "${providerName}" 暴露的协议不兼容`;
+        why = `client "${client}" speaks the ${adapter ? adapter.protocol : "?"} protocol, which is incompatible with the protocols exposed by provider "${providerName}"`;
       } else {
-        why = `client "${client}" 不可用`;
+        why = `client "${client}" is unavailable`;
       }
       throw new ResolveError(
         "client-invalid",
-        `${why}。该 model 可用 client:${avail.length ? avail.join(", ") : "(无)"}。`
+        `${why}. Clients available for this model: ${avail.length ? avail.join(", ") : "(none)"}.`
       );
     }
   } else {
     client = defaultClient(modelDef);
     if (!client) {
-      throw new ResolveError("client-missing", `model "${model}" 没有配置任何 client。`);
+      throw new ResolveError("client-missing", `model "${model}" has no clients configured.`);
     }
     // default client must still be protocol-compatible
     const check = clientValidForModel(config, model, client);
@@ -198,7 +200,7 @@ export function resolve(config, opts = {}) {
       const avail = compatibleClients(config, model);
       throw new ResolveError(
         "client-invalid",
-        `model "${model}" 的默认 client "${client}" 不可用(${check.reason})。可用 client:${avail.length ? avail.join(", ") : "(无)"}。`
+        `The default client "${client}" for model "${model}" is unavailable (${check.reason}). Available clients: ${avail.length ? avail.join(", ") : "(none)"}.`
       );
     }
   }
@@ -212,7 +214,7 @@ export function resolve(config, opts = {}) {
     const avail = compatibleClients(config, model).filter((c) => resolveBinary(c, env));
     throw new ResolveError(
       "client-not-installed",
-      `client "${client}" 未安装(PATH 上找不到可执行 "${client}")。请安装它,或改用已安装的 client:${avail.length ? avail.join(", ") : "(无可用)"}。`
+      `client "${client}" is not installed (no executable "${client}" found on PATH). Install it, or switch to an installed client: ${avail.length ? avail.join(", ") : "(none available)"}.`
     );
   }
 
@@ -225,7 +227,7 @@ export function resolve(config, opts = {}) {
       const legal = (modelDef.effort || []).filter((e) => adapter.allowedEffort.has(e));
       throw new ResolveError(
         "effort-invalid",
-        `effort "${effort}" 对 model "${model}" + client "${client}" 非法。合法值:${legal.length ? legal.join(", ") : "(无 — 该 model 的 effort 列表对 client " + client + " 无合法项)"}。`
+        `effort "${effort}" is invalid for model "${model}" + client "${client}". Valid values: ${legal.length ? legal.join(", ") : "(none — model " + model + "'s effort list has no valid entry for client " + client + ")"}.`
       );
     }
   } else {
@@ -233,7 +235,7 @@ export function resolve(config, opts = {}) {
     if (!effort) {
       throw new ResolveError(
         "effort-missing",
-        `model "${model}" 的 effort 列表 [${(modelDef.effort || []).join(", ")}] 没有任何一项对 client "${client}" 合法。`
+        `None of the entries in model "${model}"'s effort list [${(modelDef.effort || []).join(", ")}] is valid for client "${client}".`
       );
     }
   }
@@ -243,28 +245,28 @@ export function resolve(config, opts = {}) {
   if (!baseUrl) {
     throw new ResolveError(
       "base-url-missing",
-      `provider "${providerName}" 缺少 ${protocol} 协议的 base_url。请运行 /momo:config 补全。`
+      `provider "${providerName}" is missing a base_url for the ${protocol} protocol. Run /momo:config to fill it in.`
     );
   }
   if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
     throw new ResolveError(
       "api-key-missing",
-      `provider "${providerName}" 缺少 api_key。请运行 /momo:config 补全。`
+      `provider "${providerName}" is missing api_key. Run /momo:config to fill it in.`
     );
   }
 
   // §8.7 — task prompt non-empty (only checked when provided)
   if (opts.taskPrompt !== undefined) {
     if (typeof opts.taskPrompt !== "string" || opts.taskPrompt.trim() === "") {
-      throw new ResolveError("task-empty", "任务正文为空。请在 `--` 之后给出任务内容。");
+      throw new ResolveError("task-empty", "Task body is empty. Provide the task content after `--`.");
     }
   }
 
-  // 可选 wire_api(仅 openai 协议/codex client 用):model 优先,其次 provider,
-  // 缺省让适配器决定(codex 默认 chat)。
+  // Optional wire_api (only for the openai protocol / codex client): model takes precedence,
+  // then provider; if absent let the adapter decide (codex defaults to chat).
   const wireApi = modelDef.wire_api ?? provider.wire_api ?? null;
 
-  // 可选 per-model/provider 超时(毫秒)。缺省返回 null,由上层兜到 DEFAULT_TIMEOUT_MS。
+  // Optional per-model/provider timeout (ms). Returns null when absent; the caller falls back to DEFAULT_TIMEOUT_MS.
   const timeoutMs = Number.isFinite(modelDef.timeout_ms)
     ? modelDef.timeout_ms
     : Number.isFinite(provider.timeout_ms)

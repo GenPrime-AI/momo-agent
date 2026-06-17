@@ -98,7 +98,7 @@ test("codex buildInvocation: resume uses 'exec resume <session>'", () => {
     sessionId: "cs-1",
     resume: true,
   });
-  // 形态:exec resume [OPTIONS] [SESSION_ID] [PROMPT] —— 选项在 session id 之前
+  // shape: exec resume [OPTIONS] [SESSION_ID] [PROMPT] — options come before the session id
   assert.deepEqual(inv.argv.slice(0, 2), ["exec", "resume"]);
   assert.ok(inv.argv.includes("--json"), "resume must also emit JSONL");
   const sid = inv.argv.indexOf("cs-1");
@@ -123,7 +123,7 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
   assert.match(joined, /model_providers\.momo\.wire_api="chat"/, "default wire_api is chat");
   assert.equal(codex.supportsResume, true);
 
-  // codex-native 模型(名字含 codex)即使不传 wireApi,也应自动用 responses。
+  // codex-native models (name contains "codex") should auto-use responses even without an explicit wireApi.
   const auto = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "gpt-5-codex",
@@ -135,7 +135,7 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
   });
   assert.match(auto.argv.join(" "), /model_providers\.momo\.wire_api="responses"/, "gpt-5-codex auto-defaults to responses");
 
-  // 显式 wireApi 覆盖仍然优先。
+  // an explicit wireApi override still takes precedence.
   const explicit = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "some-openai-model",
@@ -194,17 +194,17 @@ test("renderModelList marks defaults with *", () => {
 });
 
 test("renderStatusList handles empty input", () => {
-  assert.match(renderStatusList([]), /没有 momo job/);
+  assert.match(renderStatusList([]), /No momo jobs/);
 });
 
 test("queued jobs render as in-progress, not finished", () => {
   const list = renderStatusList([
     { id: "j-1", status: "queued", model: "glm-5.2", client: "claude", effort: "high", started_at: "x" },
   ]);
-  assert.match(list, /进行中/);
-  assert.doesNotMatch(list, /已结束/);
+  assert.match(list, /In progress/);
+  assert.doesNotMatch(list, /Finished/);
 
   const res = renderResult({ id: "j-1", status: "queued" }, null);
-  assert.match(res, /排队|尚未开始/);
-  assert.doesNotMatch(res, /没有可取的成功结果/);
+  assert.match(res, /queued|hasn't started/);
+  assert.doesNotMatch(res, /no successful result/);
 });

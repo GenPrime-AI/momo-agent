@@ -1,5 +1,5 @@
-// 纯文本渲染:list(模型表)/status(job 状态)/result(最终输出)。
-// 纯函数,不碰 IO。
+// Plain-text rendering: list (model table) / status (job status) / result (final output).
+// Pure functions, no IO.
 
 function pad(str, width) {
   const s = String(str ?? "");
@@ -18,10 +18,10 @@ function renderTable(headers, rows) {
   return out.join("\n");
 }
 
-// /momo:list —— 模型表。models: registry 解析后的 [{ model, provider, protocols, clients, defaultClient, effort, defaultEffort }]
+// /momo:list — model table. models: registry-resolved [{ model, provider, protocols, clients, defaultClient, effort, defaultEffort }]
 export function renderModelList(models) {
   if (!models || models.length === 0) {
-    return "尚无已配置的 model。用 /momo:config 添加。";
+    return "No models configured yet. Add one with /momo:config.";
   }
   const rows = models.map((m) => {
     const clients = (m.clients ?? [])
@@ -33,7 +33,7 @@ export function renderModelList(models) {
     const protocols = Array.isArray(m.protocols) ? m.protocols.join(",") : String(m.protocols ?? "");
     return [m.model, m.provider, protocols, clients, effort];
   });
-  return `${renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows)}\n\n* = 默认`;
+  return `${renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows)}\n\n* = default`;
 }
 
 function elapsed(startIso, endIso) {
@@ -50,12 +50,12 @@ function elapsed(startIso, endIso) {
 
 function statusBadge(job) {
   if (job.status === "running" && job.suspectedStuck) {
-    return "running(疑似卡死)";
+    return "running(possibly stuck)";
   }
   return job.status;
 }
 
-// 单 job 一行摘要。
+// One-line summary for a single job.
 function jobLine(job) {
   const parts = [
     job.id,
@@ -66,28 +66,28 @@ function jobLine(job) {
   return parts.filter(Boolean).join("  ");
 }
 
-// /momo:status(全部)—— assessed jobs 列表。
+// /momo:status (all) — list of assessed jobs.
 export function renderStatusList(jobs) {
   if (!jobs || jobs.length === 0) {
-    return "没有 momo job。用 /momo:work 派发一个。";
+    return "No momo jobs. Dispatch one with /momo:work.";
   }
-  const isActive = (s) => s === "running" || s === "queued"; // queued=排队等锁,也算进行中
+  const isActive = (s) => s === "running" || s === "queued"; // queued = waiting on the lock, also counts as in progress
   const running = jobs.filter((j) => isActive(j.status));
   const finished = jobs.filter((j) => !isActive(j.status));
   const sections = [];
   if (running.length) {
-    sections.push(["进行中:", ...running.map((j) => `  ${jobLine(j)}`)].join("\n"));
+    sections.push(["In progress:", ...running.map((j) => `  ${jobLine(j)}`)].join("\n"));
     if (running.some((j) => j.suspectedStuck)) {
-      sections.push("提示:疑似卡死的 job 可用 /momo:cancel <job-id> 终止。");
+      sections.push("Tip: a job that looks stuck can be terminated with /momo:cancel <job-id>.");
     }
   }
   if (finished.length) {
-    sections.push(["已结束:", ...finished.map((j) => `  ${jobLine(j)}`)].join("\n"));
+    sections.push(["Finished:", ...finished.map((j) => `  ${jobLine(j)}`)].join("\n"));
   }
   return sections.join("\n\n");
 }
 
-// /momo:status <job-id>(单个)。
+// /momo:status <job-id> (single).
 export function renderStatusOne(job) {
   const lines = [
     `job:        ${job.id}`,
@@ -109,39 +109,39 @@ export function renderStatusOne(job) {
   }
   if (job.status === "running" && job.suspectedStuck) {
     lines.push("");
-    lines.push("提示:心跳超时,疑似卡死。可 /momo:cancel " + job.id);
+    lines.push("Tip: heartbeat timed out, possibly stuck. You can run /momo:cancel " + job.id);
   }
   return lines.join("\n");
 }
 
-// /momo:result —— done 打印完整结果;否则提示当前 status。
+// /momo:result — when done, print the full result; otherwise report the current status.
 export function renderResult(job, resultText) {
   if (job.status === "done") {
-    return resultText && resultText.trim() ? resultText : "(job 完成,但无输出文本)";
+    return resultText && resultText.trim() ? resultText : "(job finished, but produced no output text)";
   }
   if (job.status === "queued") {
-    return `job ${job.id} 仍在排队(等同线程上一个任务完成),尚未开始。用 /momo:status ${job.id} 查看。`;
+    return `job ${job.id} is still queued (waiting for the previous task on the same thread to finish) and hasn't started. Check with /momo:status ${job.id}.`;
   }
   if (job.status === "running") {
-    const stuck = job.suspectedStuck ? "(疑似卡死)" : "";
-    return `job ${job.id} 仍在运行${stuck},尚无最终结果。用 /momo:status ${job.id} 查看进度。`;
+    const stuck = job.suspectedStuck ? " (possibly stuck)" : "";
+    return `job ${job.id} is still running${stuck}, no final result yet. Check progress with /momo:status ${job.id}.`;
   }
-  // 失败类终态
-  const reason = job.error ? `:${job.error}` : "";
-  return `job ${job.id} 状态为 ${job.status}${reason}。没有可取的成功结果。`;
+  // failure terminal states
+  const reason = job.error ? `: ${job.error}` : "";
+  return `job ${job.id} has status ${job.status}${reason}. There is no successful result to fetch.`;
 }
 
-// 派发成功提示。
+// Dispatch-success message.
 export function renderWorkAccepted(job) {
   return [
-    `已后台派发 job ${job.id}(${job.model}/${job.client}/${job.effort})。`,
-    `查看进度:/momo:status ${job.id}`,
-    `取回结果:/momo:result ${job.id}`
+    `Dispatched job ${job.id} in the background (${job.model}/${job.client}/${job.effort}).`,
+    `Check progress: /momo:status ${job.id}`,
+    `Fetch result:   /momo:result ${job.id}`
   ].join("\n");
 }
 
-// cancel 结果提示。
+// Cancel-result message.
 export function renderCancel(job, result) {
-  const how = result?.delivered ? `已杀进程树(${result.method})` : "进程已不存在";
-  return `job ${job.id} 已取消(status=killed),${how}。`;
+  const how = result?.delivered ? `process tree killed (${result.method})` : "process no longer exists";
+  return `job ${job.id} cancelled (status=killed), ${how}.`;
 }

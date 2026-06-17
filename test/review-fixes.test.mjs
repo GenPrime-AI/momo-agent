@@ -97,7 +97,7 @@ test("P2: config-set refuses to overwrite a hand-broken config.json", () => {
     const r = runMomo(["config-set", "--json", payload], { home: h.home });
 
     assert.notEqual(r.status, 0, "must fail rather than silently overwrite");
-    assert.match(r.stderr, /解析失败|拒绝|手改坏/, "error must explain the refusal");
+    assert.match(r.stderr, /parse|refused|hand-broken/, "error must explain the refusal");
     assert.equal(fs.readFileSync(cfgPath, "utf8"), before, "broken file must be preserved untouched");
   } finally {
     h.cleanup();
@@ -203,7 +203,7 @@ test("P2: continue on a still-running codex job is rejected (session id not stab
 
     const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
     assert.notEqual(cont.status, 0, "codex continue must wait for the base to be done");
-    assert.match(cont.stderr, /完成才确定|done|完成/);
+    assert.match(cont.stderr, /after the task completes|done/);
 
     runMomo(["cancel", baseId], { home: h.home });
   } finally {
@@ -317,7 +317,7 @@ test("continue assesses base liveness: a hard-crashed base is rejected, not queu
 
     const cont = runMomo(["continue", id, "--", "more"], { home: h.home });
     assert.notEqual(cont.status, 0, "continue must reject a crashed base, not queue a doomed resume");
-    assert.match(cont.stderr, /crashed|无法续接/);
+    assert.match(cont.stderr, /crashed|cannot be continued/);
     // and the assessment got persisted
     const after = readJobFile(h.momoHome, id);
     assert.equal(after.status, "crashed");
@@ -460,7 +460,7 @@ test("resume re-validation: continue fails if the base never reached 'done'", as
     runMomo(["cancel", baseId], { home: h.home });
     const job = await waitForJob(h.momoHome, contId, (j) => j.status === "failed", { timeoutMs: 8000 });
     assert.equal(job.status, "failed");
-    assert.match(job.error || "", /会话未成功建立|无法续接/);
+    assert.match(job.error || "", /session was not established|cannot continue/);
   } finally {
     h.cleanup();
   }
@@ -536,7 +536,7 @@ test("cancel refuses a finishing job (client already exited) so the real result 
 
     const r = runMomo(["cancel", id], { home: h.home });
     assert.notEqual(r.status, 0, "cancel must refuse a job whose client already exited");
-    assert.match(r.stderr, /正在收尾|无法取消/);
+    assert.match(r.stderr, /finalizing|cannot cancel/);
     assert.equal(readJobFile(h.momoHome, id).status, "running", "must not clobber to killed");
   } finally {
     try { process.kill(runner, "SIGKILL"); } catch {}

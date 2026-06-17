@@ -221,7 +221,7 @@ test("arg parse: unknown flag (before --) is rejected", () => {
       home: h.home,
     });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /未知 flag.*bogus/);
+    assert.match(r.stderr, /unknown flag.*bogus/);
   } finally {
     h.cleanup();
   }
@@ -232,7 +232,7 @@ test("arg parse: empty task (-- with nothing after) is rejected", () => {
   try {
     const r = runMomo(["work", "--model", "glm-5.2", "--"], { home: h.home });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /任务正文为空/);
+    assert.match(r.stderr, /task body is empty/);
   } finally {
     h.cleanup();
   }
@@ -243,7 +243,7 @@ test("arg parse: missing -- (no task delimiter at all) is rejected", () => {
   try {
     const r = runMomo(["work", "--model", "glm-5.2"], { home: h.home });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /任务正文为空/);
+    assert.match(r.stderr, /task body is empty/);
   } finally {
     h.cleanup();
   }

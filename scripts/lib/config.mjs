@@ -46,7 +46,7 @@ export function loadConfig() {
   try {
     raw = fs.readFileSync(p, "utf8");
   } catch (err) {
-    throw new Error(`无法读取配置文件 ${p}: ${err.message}`);
+    throw new Error(`Failed to read config file ${p}: ${err.message}`);
   }
   if (raw.trim() === "") return emptyConfig();
   let parsed;
@@ -54,11 +54,11 @@ export function loadConfig() {
     parsed = JSON.parse(raw);
   } catch (err) {
     throw new Error(
-      `配置文件 ${p} 解析失败(可能被手动改坏): ${err.message}。已保留原文件,未做任何覆盖。请修复后重试,或删除该文件重新 /momo:config。`
+      `Failed to parse config file ${p} (may have been hand-edited and broken): ${err.message}. The original file was kept and nothing was overwritten. Fix it and retry, or delete the file and run /momo:config again.`
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`配置文件 ${p} 顶层不是对象,已保留原文件未覆盖。`);
+    throw new Error(`Config file ${p} top level is not an object; the original file was kept and not overwritten.`);
   }
   if (!parsed.providers || typeof parsed.providers !== "object") parsed.providers = {};
   if (!parsed.models || typeof parsed.models !== "object") parsed.models = {};
@@ -93,7 +93,7 @@ function acquireLock({ timeoutMs = 5000, staleMs = 30000 } = {}) {
         continue; // lock vanished; retry
       }
       if (Date.now() > deadline) {
-        throw new Error(`获取配置写锁超时(${lp})。可能有并发写入,或残留锁文件。`);
+        throw new Error(`Timed out acquiring config write lock (${lp}). There may be a concurrent writer or a leftover lock file.`);
       }
       sleepSync(40);
     }
@@ -130,12 +130,12 @@ function sleepSync(ms) {
 export function saveConfig(config) {
   const errors = validateConfig(config);
   if (errors.length) {
-    throw new Error("配置校验失败:\n  - " + errors.join("\n  - "));
+    throw new Error("Config validation failed:\n  - " + errors.join("\n  - "));
   }
   ensureHome();
   const lp = acquireLock();
   try {
-    // 若磁盘上已有 config 且被手改坏(无法解析),拒绝覆盖、报错保留原文件。
+    // If a config already exists on disk and has been hand-broken (unparseable), refuse to overwrite, error out, and keep the original file.
     const cp = configPath();
     if (fs.existsSync(cp)) {
       const raw = fs.readFileSync(cp, "utf8");
@@ -144,8 +144,8 @@ export function saveConfig(config) {
           JSON.parse(raw);
         } catch (e) {
           throw new Error(
-            `现有 ~/.momo/config.json 解析失败(疑似被手改坏):${e.message}。` +
-              `为避免覆盖已拒绝写入,请先修复或删除该文件后重试。`
+            `Failed to parse existing ~/.momo/config.json (likely hand-broken): ${e.message}. ` +
+              `Write refused to avoid overwriting it; fix or delete the file and retry.`
           );
         }
       }
@@ -177,7 +177,7 @@ function isPlainObject(v) {
 // then validate + atomically write (refuses if the on-disk file is unparseable).
 export function patchConfig(patch) {
   if (!isPlainObject(patch)) {
-    throw new Error("config patch 必须是对象");
+    throw new Error("config patch must be an object");
   }
   return updateConfig((current) => deepMerge(current, patch));
 }
@@ -192,7 +192,7 @@ export function updateConfig(mutator) {
     const next = mutator(current) || current;
     const errors = validateConfig(next);
     if (errors.length) {
-      throw new Error("配置校验失败:\n  - " + errors.join("\n  - "));
+      throw new Error("Config validation failed:\n  - " + errors.join("\n  - "));
     }
     atomicWrite(configPath(), JSON.stringify(next, null, 2) + "\n");
     return next;
@@ -233,15 +233,15 @@ const PROTOCOL_CLIENTS = (() => {
 export function validateConfig(config) {
   const errors = [];
   if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return ["配置顶层必须是对象。"];
+    return ["Config top level must be an object."];
   }
   const providers = config.providers;
   const models = config.models;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
-    errors.push("providers 必须是对象。");
+    errors.push("providers must be an object.");
   }
   if (!models || typeof models !== "object" || Array.isArray(models)) {
-    errors.push("models 必须是对象。");
+    errors.push("models must be an object.");
   }
   if (errors.length) return errors;
 
@@ -249,32 +249,32 @@ export function validateConfig(config) {
   for (const [pname, prov] of Object.entries(providers)) {
     const tag = `provider "${pname}"`;
     if (!prov || typeof prov !== "object") {
-      errors.push(`${tag} 必须是对象。`);
+      errors.push(`${tag} must be an object.`);
       continue;
     }
     if (!Array.isArray(prov.protocols) || prov.protocols.length === 0) {
-      errors.push(`${tag} 必须有非空 protocols 数组。`);
+      errors.push(`${tag} must have a non-empty protocols array.`);
     } else {
       for (const proto of prov.protocols) {
         if (!PROTOCOL_CLIENTS[proto]) {
           errors.push(
-            `${tag} 声明了未知协议 "${proto}"。已知协议:${Object.keys(PROTOCOL_CLIENTS).join(", ")}。`
+            `${tag} declares unknown protocol "${proto}". Known protocols: ${Object.keys(PROTOCOL_CLIENTS).join(", ")}.`
           );
         }
       }
     }
     if (!prov.base_url || typeof prov.base_url !== "object" || Array.isArray(prov.base_url)) {
-      errors.push(`${tag} 必须有 base_url 对象(按协议映射)。`);
+      errors.push(`${tag} must have a base_url object (keyed by protocol).`);
     } else if (Array.isArray(prov.protocols)) {
       for (const proto of prov.protocols) {
         const u = prov.base_url[proto];
         if (!u || typeof u !== "string") {
-          errors.push(`${tag} 协议 "${proto}" 缺少对应 base_url。`);
+          errors.push(`${tag} is missing a base_url for protocol "${proto}".`);
         }
       }
     }
     if (typeof prov.api_key !== "string" || prov.api_key.trim() === "") {
-      errors.push(`${tag} 缺少 api_key。`);
+      errors.push(`${tag} is missing api_key.`);
     }
   }
 
@@ -282,25 +282,25 @@ export function validateConfig(config) {
   for (const [mname, model] of Object.entries(models)) {
     const tag = `model "${mname}"`;
     if (!model || typeof model !== "object") {
-      errors.push(`${tag} 必须是对象。`);
+      errors.push(`${tag} must be an object.`);
       continue;
     }
     const prov = providers[model.provider];
     if (!model.provider || typeof model.provider !== "string") {
-      errors.push(`${tag} 缺少 provider。`);
+      errors.push(`${tag} is missing provider.`);
     } else if (!prov) {
-      errors.push(`${tag} 引用了不存在的 provider "${model.provider}"。`);
+      errors.push(`${tag} references a nonexistent provider "${model.provider}".`);
     }
     if (typeof model.model_id !== "string" || model.model_id.trim() === "") {
-      errors.push(`${tag} 缺少 model_id。`);
+      errors.push(`${tag} is missing model_id.`);
     }
     if (!Array.isArray(model.clients) || model.clients.length === 0) {
-      errors.push(`${tag} 必须有非空 clients 数组(有序,第一个=默认)。`);
+      errors.push(`${tag} must have a non-empty clients array (ordered; first = default).`);
     } else {
       for (const c of model.clients) {
         if (!KNOWN_CLIENTS.has(c)) {
           errors.push(
-            `${tag} 声明了未知 client "${c}"。已知 client:${[...KNOWN_CLIENTS].join(", ")}。`
+            `${tag} declares unknown client "${c}". Known clients: ${[...KNOWN_CLIENTS].join(", ")}.`
           );
           continue;
         }
@@ -309,14 +309,14 @@ export function validateConfig(config) {
           const clientProto = CLIENTS[c].protocol;
           if (!prov.protocols.includes(clientProto)) {
             errors.push(
-              `${tag} 的 client "${c}" 说 ${clientProto} 协议,但其 provider "${model.provider}" 只暴露 [${prov.protocols.join(", ")}]。`
+              `${tag}'s client "${c}" speaks the ${clientProto} protocol, but its provider "${model.provider}" only exposes [${prov.protocols.join(", ")}].`
             );
           }
         }
       }
     }
     if (!Array.isArray(model.effort) || model.effort.length === 0) {
-      errors.push(`${tag} 必须有非空 effort 数组。`);
+      errors.push(`${tag} must have a non-empty effort array.`);
     } else if (Array.isArray(model.clients) && model.clients.length) {
       // At least one effort entry must be legal for at least one known client.
       const validClients = model.clients.filter((c) => KNOWN_CLIENTS.has(c));
@@ -325,7 +325,7 @@ export function validateConfig(config) {
       );
       if (validClients.length && !anyLegal) {
         errors.push(
-          `${tag} 的 effort 列表 [${model.effort.join(", ")}] 没有任何一项对其 clients 合法。`
+          `${tag}'s effort list [${model.effort.join(", ")}] has no entry that is legal for any of its clients.`
         );
       }
     }

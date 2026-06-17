@@ -1,15 +1,16 @@
-// 文件锁:基于 mkdir 原子性(O_EXCL 语义)。
-// 用途:config 写锁(避免并发写盘损坏)、同 thread_key continue 串行(避免线程历史写坏)。
-// 锁记录持有者 pid + 时间戳;持有进程已死的陈旧锁会被抢占(stale steal)。
+// File lock: based on mkdir atomicity (O_EXCL semantics).
+// Uses: config write lock (prevent concurrent-write corruption), serializing continue for the same
+// thread_key (prevent corrupting thread history). The lock records the holder's pid + timestamp; a
+// stale lock whose holding process is dead gets preempted (stale steal).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { isAlive, procToken, verifiedOurs } from "./process.mjs";
 
-// MOMO_HOME 优先,与 config.mjs / jobs.mjs 对齐(否则锁与状态落在不同树)。
+// MOMO_HOME takes precedence, aligned with config.mjs / jobs.mjs (otherwise locks and state land in different trees).
 const LOCK_ROOT = path.join(process.env.MOMO_HOME || path.join(os.homedir(), ".momo"), "locks");
-const STALE_MS = 60_000; // 锁老于此且持有者已死 → 可抢占
+const STALE_MS = 60_000; // a lock older than this whose holder is dead → preemptible
 const DEFAULT_TIMEOUT_MS = 10_000;
 const POLL_MS = 50;
 
@@ -18,7 +19,7 @@ function lockDir(name) {
 }
 
 function sleepSync(ms) {
-  // 阻塞式 sleep,锁等待场景下可接受(短临界区)
+  // Blocking sleep, acceptable in lock-wait scenarios (short critical sections)
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
@@ -30,7 +31,7 @@ function readLockMeta(dir) {
   }
 }
 
-// 原子获取:mkdir 锁本体目录(已存在则 EEXIST)。
+// Atomic acquire: mkdir the lock's own directory (EEXIST if it already exists).
 function attemptMkdir(dir) {
   try {
     fs.mkdirSync(dir);
@@ -50,7 +51,7 @@ function ensureRoot() {
 function isStale(dir) {
   const meta = readLockMeta(dir);
   if (!meta) {
-    // 没 meta:可能正在写,给一次 mtime 兜底
+    // No meta: may be mid-write, fall back to mtime once
     try {
       const age = Date.now() - fs.statSync(dir).mtimeMs;
       return age > STALE_MS;
@@ -59,16 +60,17 @@ function isStale(dir) {
     }
   }
   const age = Date.now() - (meta.acquiredAt ?? 0);
-  // 正向验证持有者"仍是当初那个进程" → 不偷。
+  // Positively verify the holder is "still the same process as before" → don't steal.
   if (meta.pid && verifiedOurs(meta.pid, meta.token)) {
     return false;
   }
-  // token 缺失但持有者 PID 仍存活(可能是 acquire 时 ps 瞬时失败没记到 token)→ 给基于时长的
-  // 宽限:别因一次瞬时失败就抢走一个还活着的合法锁,超过 STALE_MS 才偷(兜底防真死锁)。
+  // Token missing but the holder's PID is still alive (perhaps a transient ps failure at acquire time
+  // left no token) → grant an age-based grace: don't rip away a still-alive legitimate lock over a
+  // single transient failure; only steal past STALE_MS (a safety net against real deadlocks).
   if (meta.pid && !meta.token && isAlive(meta.pid)) {
     return age > STALE_MS;
   }
-  // 已死 / PID 被复用(token 不匹配)→ 可抢。
+  // Dead / PID reused (token mismatch) → stealable.
   return !meta.pid || age > 0 ? true : age > STALE_MS;
 }
 
@@ -80,7 +82,7 @@ function steal(dir) {
   }
 }
 
-// 获取锁,返回 release 函数。超时抛错。
+// Acquire the lock, returns a release function. Throws on timeout.
 export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   ensureRoot();
   const dir = lockDir(name);
@@ -101,7 +103,7 @@ export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       };
     }
 
-    // 没拿到:陈旧锁(持有者死)→ 抢占
+    // Didn't get it: stale lock (holder dead) → preempt
     if (isStale(dir)) {
       steal(dir);
       continue;
@@ -117,7 +119,7 @@ export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   }
 }
 
-// 在锁保护下同步执行 fn。
+// Execute fn synchronously under lock protection.
 export function withLock(name, fn, options = {}) {
   const release = acquireLock(name, options);
   try {
@@ -129,7 +131,7 @@ export function withLock(name, fn, options = {}) {
 
 export const CONFIG_LOCK = "config";
 
-// 同线程串行锁名:按 thread_key 派生。
+// Same-thread serialization lock name: derived from thread_key.
 export function threadLockName(threadKey) {
   return `thread-${threadKey}`;
 }

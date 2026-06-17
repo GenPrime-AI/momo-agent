@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// momo 入口:子命令分发。
+// momo entry point: subcommand dispatch.
 //   work / continue / status / result / cancel / list / config-set / cleanup
-//   __run-job(内部:被 work/continue detached 派生,真正跑 client)
+//   __run-job (internal: spawned detached by work/continue, actually runs the client)
 //
-// 应用层。协议层(resolve/config/registry/clients)按既定路径 import,假定已存在。
+// Application layer. The protocol layer (resolve/config/registry/clients) is imported from
+// fixed paths and assumed to already exist.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -50,7 +51,7 @@ import {
   renderWorkAccepted
 } from "./lib/render.mjs";
 
-// ——— 协议层(adapter 接口约定见各 client 适配器)———
+// ——— Protocol layer (adapter interface contract: see each client adapter) ———
 import { loadConfig, patchConfig } from "./lib/config.mjs";
 import {
   listModels as listModelNames,
@@ -63,8 +64,8 @@ import {
 import { resolve as resolveExecContext, resolveForContinue } from "./lib/resolve.mjs";
 import { getClient } from "./lib/clients/index.mjs";
 
-// 把 resolve() 的执行上下文补成 runtime 期望的形态(补 timeoutMs)。
-// MOMO_TIMEOUT_MS 环境变量可覆盖 wall-clock 上限(测试/调参用)。
+// Augment resolve()'s execution context into the shape the runtime expects (add timeoutMs).
+// The MOMO_TIMEOUT_MS env var can override the wall-clock limit (for testing/tuning).
 function resolveContext(opts) {
   const config = loadConfig();
   const ctx = resolveExecContext(config, opts);
@@ -75,7 +76,7 @@ function resolveContext(opts) {
   return { ...ctx, timeoutMs };
 }
 
-// /momo:continue 专用:用 job 持久化的原始后端身份重建上下文(+ timeoutMs 兜底)。
+// For /momo:continue only: rebuild context from the job's persisted original backend identity (+ timeoutMs fallback).
 function resolveContinueContext(base) {
   const config = loadConfig();
   const ctx = resolveForContinue(config, base);
@@ -85,7 +86,7 @@ function resolveContinueContext(base) {
   return { ...ctx, timeoutMs };
 }
 
-// 供 /momo:list 渲染:从 config 投影出 render.mjs 期望的 model view。
+// For /momo:list rendering: project from config into the model view render.mjs expects.
 function resolveModelView(modelName) {
   const config = loadConfig();
   const model = getModel(config, modelName);
@@ -107,8 +108,8 @@ function resolveModelView(modelName) {
 }
 
 const SELF = fileURLToPath(import.meta.url);
-// 主 session id:优先 MOMO_SESSION_ID(SessionStart 钩子经 $CLAUDE_ENV_FILE 注入,
-// per-session 准确、多 session 不串),其次 CLAUDE_SESSION_ID,最后单活跃 session 兜底。
+// Main session id: prefer MOMO_SESSION_ID (injected by the SessionStart hook via $CLAUDE_ENV_FILE,
+// per-session accurate, no cross-talk across sessions), then CLAUDE_SESSION_ID, finally fall back to the sole active session.
 const MOMO_SESSION_ID_ENV = "MOMO_SESSION_ID";
 const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
 
@@ -123,11 +124,12 @@ function fail(message, code = 1) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ——— form C 参数解析:全 flag,任务正文在 `--` 之后 ———
-// 返回 { flags: {model,client,effort,...}, task: string|null }
-// 契约(见 agents/momo-runner.md):调用方把任务作为**单个 shell 引号参数**传在 `--` 之后,
-// 因此 `--` 后通常只有一个 argv 元素,join(" ") 即原样返回(空格/换行/缩进保真)。仅当调用方
-// 误传成多个裸 token 时才退化为单空格连接 —— 那是 shell 分词造成的,momo 已无从还原。
+// ——— form C argument parsing: all flags, task body comes after `--` ———
+// Returns { flags: {model,client,effort,...}, task: string|null }
+// Contract (see agents/momo-runner.md): the caller passes the task as a **single shell-quoted argument**
+// after `--`, so there's usually only one argv element after `--`, and join(" ") returns it verbatim
+// (spaces/newlines/indentation preserved). Only when the caller mistakenly passes multiple bare tokens
+// does it degrade to single-space joining — that's caused by shell word-splitting, which momo can no longer recover.
 function parseFormC(argv) {
   const flags = {};
   const dashDashIdx = argv.indexOf("--");
@@ -137,7 +139,7 @@ function parseFormC(argv) {
   for (let i = 0; i < flagArgs.length; i += 1) {
     const arg = flagArgs[i];
     if (!arg.startsWith("--")) {
-      throw new Error(`无法识别的位置参数 "${arg}"(任务正文必须放在 -- 之后)`);
+      throw new Error(`unrecognized positional argument "${arg}" (task body must come after --)`);
     }
     const key = arg.slice(2);
     if (BOOLEAN_FLAGS.has(key)) {
@@ -146,7 +148,7 @@ function parseFormC(argv) {
     }
     const next = flagArgs[i + 1];
     if (next === undefined || next.startsWith("--")) {
-      throw new Error(`flag --${key} 缺少取值`);
+      throw new Error(`flag --${key} is missing a value`);
     }
     flags[key] = next;
     i += 1;
@@ -154,11 +156,11 @@ function parseFormC(argv) {
   return { flags, task };
 }
 
-// 布尔 flag(无取值)。--stdin:任务正文从 stdin 读(配合引号 heredoc,免疫撇号/引号/换行)。
+// Boolean flags (no value). --stdin: read the task body from stdin (paired with a quoted heredoc, immune to apostrophes/quotes/newlines).
 const BOOLEAN_FLAGS = new Set(["stdin"]);
 const KNOWN_WORK_FLAGS = new Set(["model", "client", "effort", "stdin"]);
 
-// 从 stdin 读任务正文(byte 安全:引号 heredoc 不做任何 shell 展开)。剥掉 heredoc 末尾的换行。
+// Read the task body from stdin (byte-safe: a quoted heredoc does no shell expansion). Strip the trailing newline from the heredoc.
 function readStdinTask() {
   try {
     return fs.readFileSync(0, "utf8").replace(/\n$/, "");
@@ -170,12 +172,12 @@ function readStdinTask() {
 function assertKnownFlags(flags, allowed) {
   for (const key of Object.keys(flags)) {
     if (!allowed.has(key)) {
-      throw new Error(`未知 flag --${key}`);
+      throw new Error(`unknown flag --${key}`);
     }
   }
 }
 
-// ——— work:校验 → 派生后台进程 → 立刻打印 job-id(永远非阻塞)———
+// ——— work: validate → spawn background process → print job-id immediately (always non-blocking) ———
 function cmdWork(argv) {
   let parsed;
   try {
@@ -185,10 +187,10 @@ function cmdWork(argv) {
     fail(error.message);
   }
   const { flags } = parsed;
-  // --stdin:任务从 stdin 读(robust,免 shell 引号问题);否则取 `--` 之后的正文。
+  // --stdin: read the task from stdin (robust, avoids shell-quoting issues); otherwise take the body after `--`.
   const task = flags.stdin ? readStdinTask() : parsed.task;
 
-  // §8 校验顺序由 resolveContext(协议层)负责 fail-fast,抛错带可用项。
+  // §8 validation order is handled fail-fast by resolveContext (protocol layer); errors include the available options.
   let ctx;
   try {
     ctx = resolveContext({
@@ -200,15 +202,15 @@ function cmdWork(argv) {
     fail(error.message);
   }
 
-  // §8.7 任务正文为空
+  // §8.7 empty task body
   if (!task || !task.trim()) {
-    fail("任务正文为空(请在 -- 之后给出要委派的活)");
+    fail("task body is empty (provide the work to delegate after --)");
   }
 
   const cwd = process.cwd();
   const tk = threadKey(cwd, ctx.model, ctx.client);
   const id = generateJobId(ctx.model);
-  // 为新线程钉死一个确定性 session id,供后续 continue/resume。
+  // Pin a deterministic session id for the new thread, for later continue/resume.
   const sessionId = randomUUID();
 
   startBackgroundJob({
@@ -224,8 +226,8 @@ function cmdWork(argv) {
   process.stdout.write(`${renderWorkAccepted(readJob(id))}\n`);
 }
 
-// ——— run:前台/同步模式 —— 不 detach、不写 job,内联跑 client、阻塞到出结果,把结果打到 stdout。
-// 主 agent 用 Claude 的 run_in_background 包它即可"非阻塞 + 完成时通知",无需 job 文件/轮询。
+// ——— run: foreground/synchronous mode — no detach, no job file; runs the client inline, blocks until a result, prints it to stdout.
+// The main agent can wrap this in Claude's run_in_background for "non-blocking + notify on completion", with no job file/polling. ———
 async function cmdRun(argv) {
   let parsed;
   try {
@@ -244,7 +246,7 @@ async function cmdRun(argv) {
     fail(error.message);
   }
   if (!task || !task.trim()) {
-    fail("任务正文为空(请在 -- 之后或用 --stdin 给出要委派的活)");
+    fail("task body is empty (provide the work to delegate after -- or via --stdin)");
   }
 
   const client = ctx.adapter;
@@ -261,7 +263,7 @@ async function cmdRun(argv) {
       resume: false
     });
   } catch (error) {
-    fail(`构造调用失败: ${error.message}`);
+    fail(`failed to build invocation: ${error.message}`);
   }
 
   for (const f of invocation.files ?? []) {
@@ -275,14 +277,14 @@ async function cmdRun(argv) {
     else childEnv[k] = v;
   }
 
-  // client 自成进程组,便于超时/被杀时整树清理。我们(momo)保持前台 await,不 detach。
+  // The client forms its own process group, so its whole tree can be cleaned up on timeout/kill. We (momo) stay foreground and await; no detach.
   const child = spawn(invocation.command, invocation.argv, {
     cwd: process.cwd(),
     env: childEnv,
     detached: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
-  // 被 Claude(后台任务)或用户终止 momo 时,连带杀掉 client 子树,不留孤儿。
+  // When Claude (background task) or the user terminates momo, also kill the client subtree so no orphans are left.
   const onTerm = () => {
     terminateProcessTree(child.pid, { signal: "SIGKILL" });
     process.exit(130);
@@ -314,7 +316,7 @@ async function cmdRun(argv) {
   clearTimeout(timer);
 
   if (timedOut) {
-    fail(`wall-clock 超时(>${Math.round(ctx.timeoutMs / 1000)}s),已终止`);
+    fail(`wall-clock timeout (>${Math.round(ctx.timeoutMs / 1000)}s), terminated`);
   }
   if (exit.spawnError) {
     fail(mapClientError(exit.spawnError.message, stderr));
@@ -329,12 +331,12 @@ async function cmdRun(argv) {
     process.stdout.write(text.endsWith("\n") ? text : text + "\n");
     process.exit(0);
   }
-  fail(mapClientError(`client 退出码 ${exit.code}`, stderr));
+  fail(mapClientError(`client exit code ${exit.code}`, stderr));
 }
 
-// ——— continue:复用 (thread_key, session_id) 起新后台 job,同线程串行 ———
+// ——— continue: reuse (thread_key, session_id) to start a new background job, serialized within the same thread ———
 function cmdContinue(argv) {
-  // 形态:continue <job-id> -- <追加指令>  或  continue <job-id> --stdin (正文走 stdin)
+  // Forms: continue <job-id> -- <follow-up instruction>  or  continue <job-id> --stdin (body via stdin)
   const dashDashIdx = argv.indexOf("--");
   const head = dashDashIdx === -1 ? argv : argv.slice(0, dashDashIdx);
   const useStdin = head.includes("--stdin");
@@ -346,10 +348,10 @@ function cmdContinue(argv) {
       : argv.slice(dashDashIdx + 1).join(" ");
 
   if (!reference) {
-    fail("用法:/momo:continue <job-id> -- <追加指令>");
+    fail("usage: /momo:continue <job-id> -- <follow-up instruction>");
   }
   if (!task || !task.trim()) {
-    fail("追加指令为空(请在 -- 之后给出)");
+    fail("follow-up instruction is empty (provide it after --)");
   }
 
   let base;
@@ -359,42 +361,45 @@ function cmdContinue(argv) {
     fail(error.message);
   }
   if (!base) {
-    fail(`找不到 job "${reference}"。用 /momo:status 查看已知 job。`);
+    fail(`job "${reference}" not found. Use /momo:status to see known jobs.`);
   }
 
-  // 先做存活判定 —— base 可能"磁盘上写着 running 但 runner 已硬崩",assessJob 会把它转成
-  // crashed 并落盘。否则我们会基于陈旧状态接受 continue,排一个注定 resume 失败的 follow-up。
+  // First do a liveness check — base may be "marked running on disk but the runner has hard-crashed";
+  // assessJob converts it to crashed and persists. Otherwise we'd accept a continue based on stale
+  // state and queue a follow-up that's doomed to fail resume.
   base = assessJob(base);
 
-  // resume 能力由 client 适配器决定(codex 可能不支持)。
+  // Resume capability is decided by the client adapter (codex may not support it).
   const client = getClient(base.client);
   if (!client) {
-    fail(`job ${base.id} 的 client "${base.client}" 不可用`);
+    fail(`client "${base.client}" for job ${base.id} is unavailable`);
   }
   if (client.supportsResume === false) {
-    fail(`client "${base.client}" 暂不支持 continue/resume`);
+    fail(`client "${base.client}" does not yet support continue/resume`);
   }
-  // 何时可续接(会话 id 是否"完成前就稳定"):
-  //  - 任何 client:base 已 done → 可续(会话已建立)。
-  //  - claude(sessionIdStable):work 时 --session-id 钉死,base 处于活动态(queued/running)
-  //    也可续 —— 靠同 thread_key 锁排队在其后。但若 base 已是非 done 终态(crashed/failed/
-  //    killed/timeout),会话很可能没真正建立,拒绝并讲清原因。
-  //  - codex(不稳定):真实 resume id 要解析完成输出才知 → 只能续 done。
+  // When continue is allowed (whether the session id is "stable before completion"):
+  //  - any client: base is done → can continue (session already established).
+  //  - claude (sessionIdStable): --session-id is pinned at work time, so an active base (queued/running)
+  //    can also be continued — it queues behind via the same thread_key lock. But if base is already in a
+  //    non-done terminal state (crashed/failed/killed/timeout), the session likely never actually got
+  //    established, so reject and explain why.
+  //  - codex (unstable): the real resume id is only known after parsing the completed output → can only continue done jobs.
   const stable = client.sessionIdStable === true;
   const okToContinue = base.status === "done" || (stable && isActive(base.status));
   if (!okToContinue) {
     fail(
       stable
-        ? `job ${base.id} 当前是 "${base.status}",无法续接(请基于 运行中 或 已完成 的 job)。`
-        : `job ${base.id} 当前是 "${base.status}";client "${base.client}" 的会话 id 要等任务完成才确定,请等它 done 后再 continue。`
+        ? `job ${base.id} is currently "${base.status}" and cannot be continued (base a running or done job).`
+        : `job ${base.id} is currently "${base.status}"; the session id for client "${base.client}" is only determined after the task completes, so wait until it's done before continuing.`
     );
   }
   if (!base.session_id) {
-    fail(`job ${base.id} 没有可 resume 的 session_id(原 job 可能未成功建立会话)`);
+    fail(`job ${base.id} has no resumable session_id (the original job may not have established a session)`);
   }
 
-  // 用原始后端身份(persist 在 job 里)重建上下文,只取当前 provider 的 key/base_url
-  // (允许凭证轮换)。不经 model 别名 → 即便 model 名被重指到别的 backend,老线程仍 resume 原 backend。
+  // Rebuild context from the original backend identity (persisted in the job), taking only the current
+  // provider's key/base_url (allows credential rotation). It bypasses the model alias → even if the model
+  // name is repointed to a different backend, the old thread still resumes the original backend.
   let ctx;
   try {
     ctx = resolveContinueContext(base);
@@ -403,7 +408,7 @@ function cmdContinue(argv) {
   }
 
   const id = generateJobId(base.model);
-  // 同 thread_key 串行:加文件锁(派生进程瞬时持有,真正串行在 __run-job 内)。
+  // Serialized within the same thread_key: a file lock (held briefly by the spawning process; the real serialization happens inside __run-job).
   startBackgroundJob({
     id,
     ctx,
@@ -418,14 +423,14 @@ function cmdContinue(argv) {
   process.stdout.write(`${renderWorkAccepted(readJob(id))}\n`);
 }
 
-// 落 job 记录 + 派生 detached __run-job 进程。
+// Write the job record + spawn the detached __run-job process.
 function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume, resume_from = null }) {
-  // 提交序号(全局单调):同线程 FIFO 据此保持"先提交先执行"。
+  // Submission sequence number (globally monotonic): same-thread FIFO uses this to keep "first submitted, first executed".
   const seq = nextSeq();
-  // job 记录里附带执行参数,供 __run-job 读取(子进程看不到主对话,正文自带上下文)。
+  // The job record carries the execution parameters for __run-job to read (the child can't see the main conversation, so the body carries its own context).
   const record = createRunningJob({
     id,
-    pid: 0, // 占位,__run-job 启动后回填自身 pid
+    pid: 0, // placeholder; __run-job backfills its own pid after starting
     seq,
     model: ctx.model,
     client: ctx.client,
@@ -440,9 +445,10 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     cwd,
     timeout_ms: ctx.timeoutMs
   });
-  // 附加 runner 需要、但不属于状态契约的字段(加锁守卫:若刚创建就被 SessionEnd 清掉,
-  // 不复活)。注意:api_key **不写进 job 文件**(避免明文密钥落进 ~/.momo/jobs/*.json,
-  // SIGKILL 后也不残留)—— 改用 runner 进程的环境变量 MOMO_JOB_API_KEY 传递(仅在内存中)。
+  // Attach fields the runner needs but that aren't part of the status contract (lock-guarded: if it was
+  // just created and then cleared by SessionEnd, don't resurrect it). Note: api_key is **not written into
+  // the job file** (to avoid a plaintext key landing in ~/.momo/jobs/*.json, and so nothing lingers after
+  // SIGKILL) — instead it's passed via the runner process's env var MOMO_JOB_API_KEY (in memory only).
   patchIfActive(id, {
     _exec: {
       modelId: ctx.modelId,
@@ -466,15 +472,15 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
       logFile: jobLogFile(id)
     });
   } catch (error) {
-    // 后台 runner 没起来(如 cwd 被删):把 queued 记录收尾成 failed,别留 pid:0 僵尸记录。
-    finalizeJob(id, { status: "failed", error: `后台 runner 启动失败: ${error.message}` });
-    fail(`无法启动后台任务: ${error.message}`);
+    // The background runner failed to start (e.g. cwd was deleted): finalize the queued record as failed, don't leave a pid:0 zombie record.
+    finalizeJob(id, { status: "failed", error: `background runner failed to start: ${error.message}` });
+    fail(`failed to start background task: ${error.message}`);
   }
-  // 回填 runner pid + 身份 token(加锁守卫:job 若已被取消/清理,不被陈旧快照复活)。
+  // Backfill the runner pid + identity token (lock-guarded: if the job was already canceled/cleaned up, don't let a stale snapshot resurrect it).
   patchIfActive(id, { pid, pid_token: procToken(pid) });
 }
 
-// ——— __run-job(内部):detached 子进程,真正跑 client、心跳、写终态 ———
+// ——— __run-job (internal): detached child process that actually runs the client, heartbeats, and writes the terminal state ———
 async function cmdRunJob(argv) {
   const id = argv[0];
   if (!id) {
@@ -484,8 +490,8 @@ async function cmdRunJob(argv) {
   if (!job || !job._exec) {
     process.exit(2);
   }
-  // 回填自身 pid + 身份 token(detached leader),加锁守卫:若 work 返回后立刻被 cancel/SessionEnd
-  // 置终态,不复活它,且 runner 直接退出(不再起 client)。
+  // Backfill own pid + identity token (detached leader), lock-guarded: if it was set to a terminal state
+  // by cancel/SessionEnd right after work returned, don't resurrect it, and the runner exits directly (no client started).
   const started = patchIfActive(id, { pid: process.pid, pid_token: procToken(process.pid) });
   if (!started || isTerminal(started.status)) {
     process.exit(0);
@@ -497,21 +503,23 @@ async function cmdRunJob(argv) {
   await runUnderThreadLock(id, job, exec, client);
 }
 
-// 在 thread_key 锁保护下执行整个 client run(含心跳 + 超时兜底)。
-// 同 thread_key 的并发 continue 在此排队,避免线程历史写坏。
+// Execute the entire client run under the thread_key lock (with heartbeat + timeout fallback).
+// Concurrent continues on the same thread_key queue here, preventing the thread history from being corrupted.
 async function runUnderThreadLock(id, job, exec, client) {
-  // 锁等待时长 ≥ 前面 base 的最大运行时(wall-clock 超时)+ 1h 缓冲;锁有"持有者死则抢占"兜底。
+  // Lock wait duration ≥ the max runtime of the preceding base (wall-clock timeout) + 1h buffer; the lock has a "preempt if holder is dead" fallback.
   const lockWaitMs = Math.max((exec.timeout_ms ?? DEFAULT_TIMEOUT_MS) + 3_600_000, 3_600_000);
 
-  // ── FIFO + 拿锁后统一校验 ──
-  // 反复抢同线程锁,直到:本 job 仍活动、且同线程没有"更早提交(seq 更小)且未完成"的 job。
-  // 这样即便多个 continue 几乎同时派发、乱序抢到锁,也严格按提交顺序执行(避免线程历史错序)。
+  // ── FIFO + unified check after acquiring the lock ──
+  // Repeatedly contend for the same-thread lock until: this job is still active, and no job on the same
+  // thread was "submitted earlier (smaller seq) and not yet finished".
+  // This way, even if multiple continues are dispatched almost simultaneously and grab the lock out of order,
+  // they execute strictly in submission order (avoiding out-of-order thread history).
   let releaseThread;
   for (;;) {
     releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: lockWaitMs });
     const cur = readJob(id);
     if (!cur || isTerminal(cur.status)) {
-      // 排队期间已被 cancel/cleanup 置终态 → 绝不执行,直接退出(终态吸收的执行边界守卫)。
+      // Set to a terminal state by cancel/cleanup while queued → never execute, exit directly (terminal-state-absorbing execution boundary guard).
       releaseThread();
       process.exit(0);
     }
@@ -523,22 +531,24 @@ async function runUnderThreadLock(id, job, exec, client) {
     break;
   }
 
-  // 轮到本 job:queued → running(重置 started_at 为开跑时刻)。若此刻已终态则不执行 —— markRunning
-  // 是终态吸收的,返回非 running 即说明刚被 cancel/cleanup 抢先,立即退出,绝不 buildInvocation/spawn。
+  // This job's turn: queued → running (reset started_at to the actual start moment). If it's already terminal
+  // now, don't execute — markRunning is terminal-state-absorbing, so a non-running return means cancel/cleanup
+  // just got ahead; exit immediately, never buildInvocation/spawn.
   const started = markRunning(id);
   if (!started || started.status !== "running") {
     releaseThread();
     process.exit(0);
   }
 
-  // resume:此刻前驱(FIFO 保证)已结束。要求它真正 done(claude/codex 的会话此时才确定已建立),
-  // 并用其**最终** session_id(而非提交时复制的占位值)。前驱未 done → 会话未建立,拒绝续接。
+  // resume: at this point the predecessor (FIFO-guaranteed) has finished. Require it to actually be done
+  // (only now is the claude/codex session confirmed established), and use its **final** session_id (not the
+  // placeholder copied at submission time). Predecessor not done → session not established, reject the continue.
   if (exec.resume && exec.resume_from) {
     const base = readJob(exec.resume_from);
     if (!base || base.status !== "done") {
       finalizeJob(id, {
         status: "failed",
-        error: `原 job ${exec.resume_from} 最终为 ${base ? base.status : "缺失"},会话未成功建立,无法续接。`
+        error: `original job ${exec.resume_from} ended as ${base ? base.status : "missing"}; the session was not established, cannot continue.`
       });
       releaseThread();
       process.exit(1);
@@ -552,25 +562,25 @@ async function runUnderThreadLock(id, job, exec, client) {
       taskPrompt: exec.task,
       modelId: exec.modelId,
       baseUrl: exec.baseUrl,
-      apiKey: process.env.MOMO_JOB_API_KEY ?? exec.apiKey, // 密钥从 env 取,不从 job 文件
+      apiKey: process.env.MOMO_JOB_API_KEY ?? exec.apiKey, // key comes from env, not the job file
       effort: exec.effort,
       wireApi: exec.wireApi ?? null,
       sessionId: exec.session_id,
       resume: exec.resume
     });
   } catch (error) {
-    finalizeJob(id, { status: "failed", error: `构造调用失败: ${error.message}` });
+    finalizeJob(id, { status: "failed", error: `failed to build invocation: ${error.message}` });
     releaseThread();
     process.exit(1);
   }
 
-  // 落盘 client 需要的临时配置文件
+  // Write the temporary config files the client needs to disk
   for (const f of invocation.files ?? []) {
     fs.mkdirSync(path.dirname(f.path), { recursive: true });
     fs.writeFileSync(f.path, f.content, "utf8");
   }
 
-  // env 值为 null = 需 UNSET(claude 强制 unset ANTHROPIC_AUTH_TOKEN)。
+  // An env value of null = must UNSET (claude forcibly unsets ANTHROPIC_AUTH_TOKEN).
   const childEnv = { ...process.env };
   for (const [k, v] of Object.entries(invocation.env ?? {})) {
     if (v === null) {
@@ -579,9 +589,10 @@ async function runUnderThreadLock(id, job, exec, client) {
       childEnv[k] = v;
     }
   }
-  // 先装 SIGTERM 处理器(引用可变 child),**再** spawn —— 这样从 client 一诞生起,
-  // 若 runner 被 cancel/cleanup 杀(SIGTERM 打到 runner 组),处理器就会杀掉 client 子树,
-  // 不留孤儿;即便 client_pid 还没来得及落盘,也没有"client 已起但无人能杀"的窗口。
+  // Install the SIGTERM handler first (referencing the mutable child), **then** spawn — so from the moment
+  // the client is born, if the runner is killed by cancel/cleanup (SIGTERM hits the runner group), the handler
+  // kills the client subtree, leaving no orphans; even if client_pid hasn't been persisted yet, there's no
+  // window where "the client is up but no one can kill it".
   let child = null;
   const onTerm = () => {
     if (child) terminateProcessTree(child.pid, { signal: "SIGKILL" });
@@ -589,7 +600,7 @@ async function runUnderThreadLock(id, job, exec, client) {
   };
   process.on("SIGTERM", onTerm);
 
-  // client detached:自成进程组,terminateProcessTree(child.pid) 能命中其整棵子树。
+  // client detached: forms its own process group, so terminateProcessTree(child.pid) can hit its entire subtree.
   child = spawn(invocation.command, invocation.argv, {
     cwd: job.cwd,
     env: childEnv,
@@ -597,8 +608,8 @@ async function runUnderThreadLock(id, job, exec, client) {
     stdio: ["ignore", "pipe", "pipe"]
   });
 
-  // 持久化 client 进程组 leader pid(加锁守卫)。若发现 job 在我们 spawn client 的瞬间已被
-  // 取消/清理(终态),立即杀掉刚起的 client 并退出 —— 不复活 job,也不留孤儿。
+  // Persist the client process-group leader pid (lock-guarded). If the job was already canceled/cleaned up
+  // (terminal) at the instant we spawned the client, immediately kill the just-started client and exit — don't resurrect the job, and leave no orphans.
   const pj = patchIfActive(id, { client_pid: child.pid, client_pid_token: procToken(child.pid) });
   if (!pj || isTerminal(pj.status)) {
     terminateProcessTree(child.pid, { signal: "SIGKILL" });
@@ -608,9 +619,9 @@ async function runUnderThreadLock(id, job, exec, client) {
 
   let stdout = "";
   let stderr = "";
-  // 有界缓冲:只保留尾部 —— client 的最终结果(claude 的 result JSON / codex 的末条 agent_message)
-  // 都在输出尾部。这样无论 client 多啰嗦(codex --json 的海量 JSONL、超长答案)runner 内存都封顶,
-  // 不会 OOM 丢结果。
+  // Bounded buffer: keep only the tail — the client's final result (claude's result JSON / codex's last
+  // agent_message) is always at the tail of the output. This caps runner memory no matter how verbose the
+  // client is (codex --json's massive JSONL, very long answers), so it won't OOM and lose the result.
   const MAX_STDOUT = 4 * 1024 * 1024;
   const MAX_STDERR = 64 * 1024;
   const tailAppend = (buf, chunk, max) => {
@@ -624,12 +635,13 @@ async function runUnderThreadLock(id, job, exec, client) {
     stderr = tailAppend(stderr, d.toString(), MAX_STDERR);
   });
 
-  // 心跳:每 ≤5s 更新 last_heartbeat
+  // Heartbeat: update last_heartbeat every ≤5s
   const hb = setInterval(() => heartbeat(id), HEARTBEAT_INTERVAL_MS);
 
-  // 超时兜底:wall-clock 上限 → SIGKILL 杀进程树(SIGKILL 不可被 trap,client 必死、
-  // close 必触发)→ status=timeout。再加一道硬退出兜底:万一 close 仍不触发(如 stdio
-  // 管道卡住),宽限后强制写终态、释放线程锁、退出,绝不让 runner 永久占锁/卡 running。
+  // Timeout fallback: wall-clock limit → SIGKILL the process tree (SIGKILL can't be trapped, so the client
+  // must die and close must fire) → status=timeout. Plus a hard-exit fallback: in case close still doesn't fire
+  // (e.g. a stdio pipe stuck), after a grace period forcibly write the terminal state, release the thread lock,
+  // and exit — never let the runner hold the lock forever / get stuck in running.
   let timedOut = false;
   let hardExitTimer = null;
   const timeoutMs = exec.timeout_ms ?? job.timeout_ms;
@@ -640,7 +652,7 @@ async function runUnderThreadLock(id, job, exec, client) {
       try {
         finalizeJob(id, {
           status: "timeout",
-          error: `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s);SIGKILL 后仍未退出,强制收尾`
+          error: `wall-clock timeout (>${Math.round(timeoutMs / 1000)}s); still not exited after SIGKILL, forcing finalization`
         });
       } catch {
         /* best effort */
@@ -660,13 +672,13 @@ async function runUnderThreadLock(id, job, exec, client) {
   clearTimeout(timer);
   if (hardExitTimer) clearTimeout(hardExitTimer);
 
-  // 所有终态都走 finalizeJob(锁内、终态守卫、自动剥离 _exec)。
+  // All terminal states go through finalizeJob (in-lock, terminal-state guarded, auto-strips _exec).
 
   if (timedOut) {
     finalizeJob(id, {
       status: "timeout",
       exit_code: exit.code,
-      error: `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s),已杀进程树`
+      error: `wall-clock timeout (>${Math.round(timeoutMs / 1000)}s), killed the process tree`
     });
     releaseThread();
     process.exit(0);
@@ -679,7 +691,7 @@ async function runUnderThreadLock(id, job, exec, client) {
   }
 
   if (exit.code === 0) {
-    // 解析结果文本 + session id(供后续 continue)
+    // Parse the result text + session id (for later continue)
     let resultText = "";
     try {
       resultText = client.parseResult(stdout) ?? "";
@@ -692,9 +704,9 @@ async function runUnderThreadLock(id, job, exec, client) {
     } catch {
       /* none */
     }
-    // 稳定 client(claude):work 钉死的 session_id 本身就是可 resume 的;解析到更准的就用。
-    // 不稳定 client(codex):**只有**真正解析出真实 id 才存;否则置 null,绝不留占位 UUID,
-    // 否则 /momo:continue 会拿假 id 去 resume 不存在的线程。
+    // Stable client (claude): the session_id pinned at work time is itself resumable; if a more accurate one is parsed, use it.
+    // Unstable client (codex): store **only** if a real id was actually parsed; otherwise set null, never leave a placeholder UUID,
+    // or /momo:continue would use a fake id to resume a nonexistent thread.
     const sessionId =
       client.sessionIdStable === true ? extracted ?? job.session_id ?? null : extracted;
     finalizeJob(id, { status: "done", exit_code: 0, session_id: sessionId, result_text: resultText });
@@ -702,24 +714,24 @@ async function runUnderThreadLock(id, job, exec, client) {
     process.exit(0);
   }
 
-  // 非零退出 → failed,把 stderr 映射成友好错误
+  // Non-zero exit → failed, map stderr to a friendly error
   finalizeJob(id, {
     status: "failed",
     exit_code: exit.code,
-    error: mapClientError(`client 退出码 ${exit.code}`, stderr)
+    error: mapClientError(`client exit code ${exit.code}`, stderr)
   });
   releaseThread();
   process.exit(1);
 }
 
-// 运行后才暴露的错(401/网络)→ 友好提示。
+// Errors only surfaced at run time (401/network) → friendly message.
 function mapClientError(base, stderr) {
   const text = (stderr || "").trim();
   if (/401|unauthorized|invalid api key|authentication/i.test(text)) {
-    return `${base}: 鉴权失败(检查 api_key,/momo:config)`;
+    return `${base}: authentication failed (check api_key, /momo:config)`;
   }
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network|getaddrinfo/i.test(text)) {
-    return `${base}: 网络错误(检查 base_url / 连通性)`;
+    return `${base}: network error (check base_url / connectivity)`;
   }
   const tail = text ? `: ${text.split("\n").slice(-3).join(" ").slice(0, 400)}` : "";
   return `${base}${tail}`;
@@ -740,7 +752,7 @@ function cmdStatus(argv) {
     fail(error.message);
   }
   if (!job) {
-    fail(`找不到 job "${reference}"`);
+    fail(`job "${reference}" not found`);
   }
   process.stdout.write(`${renderStatusOne(assessJob(job))}\n`);
 }
@@ -749,7 +761,7 @@ function cmdStatus(argv) {
 function cmdResult(argv) {
   const reference = argv[0];
   if (!reference) {
-    fail("用法:/momo:result <job-id>");
+    fail("usage: /momo:result <job-id>");
   }
   let job;
   try {
@@ -758,17 +770,17 @@ function cmdResult(argv) {
     fail(error.message);
   }
   if (!job) {
-    fail(`找不到 job "${reference}"`);
+    fail(`job "${reference}" not found`);
   }
   const assessed = assessJob(job);
   process.stdout.write(`${renderResult(assessed, assessed.result_text)}\n`);
 }
 
-// ——— cancel:杀进程树 → status=killed ———
+// ——— cancel: kill the process tree → status=killed ———
 function cmdCancel(argv) {
   const reference = argv[0];
   if (!reference) {
-    fail("用法:/momo:cancel <job-id>");
+    fail("usage: /momo:cancel <job-id>");
   }
   let job;
   try {
@@ -777,19 +789,19 @@ function cmdCancel(argv) {
     fail(error.message);
   }
   if (!job) {
-    fail(`找不到 job "${reference}"`);
+    fail(`job "${reference}" not found`);
   }
   if (isTerminal(job.status)) {
-    fail(`job ${job.id} 已是终态 (${job.status}),无需取消`);
+    fail(`job ${job.id} is already terminal (${job.status}), nothing to cancel`);
   }
-  // 若 client 已退出(任务已结束、runner 正在收尾写真实结果)→ 不抢占,否则 killed 会吸收掉
-  // 刚完成的 done/failed,丢结果。让 runner 正常 finalize。
+  // If the client has already exited (the task finished and the runner is finalizing with the real result) →
+  // don't preempt, otherwise killed would absorb the just-completed done/failed and lose the result. Let the runner finalize normally.
   if (!executionStillLive(job)) {
-    fail(`job ${job.id} 已执行完毕、正在收尾,无法取消;稍后用 /momo:result ${job.id} 取结果。`);
+    fail(`job ${job.id} has finished executing and is finalizing, cannot cancel; use /momo:result ${job.id} shortly to get the result.`);
   }
-  // 仍在跑:先认领终态(killed)——终态吸收保证它必胜(即便杀 client 触发 runner 的 close 收尾)。
-  // 再验身份杀进程(PID 复用则跳过,绝不误杀)。
-  finalizeJob(job.id, { status: "killed", error: "用户取消" });
+  // Still running: claim the terminal state (killed) first — terminal-state absorption guarantees it wins
+  // (even if killing the client triggers the runner's close finalization). Then verify identity before killing the process (skip on PID reuse, never kill the wrong one).
+  finalizeJob(job.id, { status: "killed", error: "canceled by user" });
   terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
   const result = terminateTreeIfOurs(job.pid, job.pid_token);
   process.stdout.write(`${renderCancel(job, result)}\n`);
@@ -807,38 +819,38 @@ function cmdList() {
   process.stdout.write(`${renderModelList(models)}\n`);
 }
 
-// ——— config-set(只校验 + 原子写,不做 NL 解析)———
+// ——— config-set (validate + atomic write only, no NL parsing) ———
 function cmdConfigSet(argv) {
   const parsed = parseFormC(argv);
   const jsonStr = parsed.flags.json;
   if (!jsonStr) {
-    fail("用法:config-set --json '<结构化JSON>'");
+    fail("usage: config-set --json '<structured JSON>'");
   }
   let payload;
   try {
     payload = JSON.parse(jsonStr);
   } catch (error) {
-    fail(`--json 不是合法 JSON: ${error.message}`);
+    fail(`--json is not valid JSON: ${error.message}`);
   }
   try {
-    // patchConfig:把**部分** patch 深合并进现有 config(不删除未触及的 provider/model),
-    // 再校验(§6.1)+ 原子写 + 写锁;坏 JSON 不覆盖在 config.mjs 内保证。
+    // patchConfig: deep-merge a **partial** patch into the existing config (without deleting untouched
+    // providers/models), then validate (§6.1) + atomic write + write lock; config.mjs guarantees bad JSON won't overwrite.
     patchConfig(payload);
   } catch (error) {
     fail(error.message);
   }
-  process.stdout.write("配置已写入 ~/.momo/config.json。用 /momo:list 查看。\n");
+  process.stdout.write("config written to ~/.momo/config.json. Use /momo:list to view.\n");
 }
 
-// ——— cleanup(SessionEnd 也可经 cleanup-session.mjs)———
+// ——— cleanup (SessionEnd can also go through cleanup-session.mjs) ———
 async function cmdCleanup() {
   const { cleanupSession } = await import("./cleanup-session.mjs");
   const sessionId = currentSessionId();
   const killed = cleanupSession(sessionId);
-  process.stdout.write(`cleanup: 杀掉 ${killed.length} 个 running job\n`);
+  process.stdout.write(`cleanup: killed ${killed.length} running job(s)\n`);
 }
 
-// ——— 分发 ———
+// ——— Dispatch ———
 async function main() {
   const [, , sub, ...rest] = process.argv;
   switch (sub) {
@@ -864,7 +876,7 @@ async function main() {
       return cmdRunJob(rest);
     default:
       fail(
-        `未知子命令 "${sub ?? ""}"。可用:work run continue status result cancel list config-set cleanup`,
+        `unknown subcommand "${sub ?? ""}". Available: work run continue status result cancel list config-set cleanup`,
         2
       );
   }

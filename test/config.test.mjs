@@ -32,7 +32,7 @@ test("config-set rejects invalid config (unknown client) and does not write", ()
     bad.models["glm-5.2"].clients = ["nonsense-client"];
     const r = runMomo(["config-set", "--json", JSON.stringify(bad)], { home: h.home });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /未知 client|校验/);
+    assert.match(r.stderr, /unknown client|validation/);
     assert.equal(fs.existsSync(configFile(h.momoHome)), false);
   } finally {
     h.cleanup();
