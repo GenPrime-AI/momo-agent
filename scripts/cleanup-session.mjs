@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+// SessionEnd hook:主 session 结束时,杀掉本 session 派生的所有 running momo job 进程树。
+// 不留孤儿(SPEC §2.2)。主 session id 从 hook stdin JSON 或环境变量取。
+import process from "node:process";
+
+import { finalizeJob, listRunningBySession } from "./lib/jobs.mjs";
+import { terminateProcessTree } from "./lib/process.mjs";
+
+const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
+
+// 杀 claude_session == sessionId 的所有 running job。返回被杀 job 列表。
+export function cleanupSession(sessionId) {
+  if (!sessionId) {
+    return [];
+  }
+  const jobs = listRunningBySession(sessionId);
+  const killed = [];
+  for (const job of jobs) {
+    // 先直接杀 client 子树(SIGKILL),不依赖 runner 的 SIGTERM relay,避免孤儿。
+    if (job.client_pid) {
+      terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
+    }
+    // 再杀 __run-job(detached 组 leader);其 SIGTERM 处理器作为双保险。
+    terminateProcessTree(job.pid, { signal: "SIGTERM" });
+    finalizeJob(job.id, { status: "killed", error: "主 session 结束,自动清理" });
+    killed.push(job.id);
+  }
+  return killed;
+}
+
+// 从 hook stdin(JSON,字段 session_id)读主 session id;失败回退环境变量。
+async function readSessionIdFromStdin() {
+  if (process.stdin.isTTY) {
+    return null;
+  }
+  let raw = "";
+  for await (const chunk of process.stdin) {
+    raw += chunk;
+  }
+  const text = raw.trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.session_id ?? parsed.sessionId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function main() {
+  const fromStdin = await readSessionIdFromStdin();
+  const sessionId = fromStdin ?? process.env[SESSION_ID_ENV] ?? null;
+  const killed = cleanupSession(sessionId);
+  process.stdout.write(`momo cleanup: 杀掉 ${killed.length} 个 running job\n`);
+}
+
+// 仅作为脚本直接运行时执行 main(被 import 时只导出 cleanupSession)。
+const isDirectRun =
+  process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+if (isDirectRun) {
+  main().catch((error) => {
+    process.stderr.write(`momo cleanup error: ${error?.message ?? error}\n`);
+    process.exit(1);
+  });
+}

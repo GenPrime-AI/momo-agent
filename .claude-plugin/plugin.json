@@ -1,0 +1,8 @@
+{
+  "name": "momo",
+  "version": "1.0.0",
+  "description": "Delegate a chunk of work to any vendor / any CLI client's model, run it in the background, and fetch the result back.",
+  "author": {
+    "name": "momo"
+  }
+}
