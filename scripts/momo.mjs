@@ -367,12 +367,33 @@ async function runUnderThreadLock(id, job, exec, client) {
   // 心跳:每 ≤5s 更新 last_heartbeat
   const hb = setInterval(() => heartbeat(id), HEARTBEAT_INTERVAL_MS);
 
-  // 超时兜底:wall-clock 上限 → 杀进程树 → status=timeout
+  // 超时兜底:wall-clock 上限 → SIGKILL 杀进程树(SIGKILL 不可被 trap,client 必死、
+  // close 必触发)→ status=timeout。再加一道硬退出兜底:万一 close 仍不触发(如 stdio
+  // 管道卡住),宽限后强制写终态、释放线程锁、退出,绝不让 runner 永久占锁/卡 running。
   let timedOut = false;
+  let hardExitTimer = null;
   const timeoutMs = exec.timeout_ms ?? job.timeout_ms;
   const timer = setTimeout(() => {
     timedOut = true;
-    terminateProcessTree(child.pid);
+    terminateProcessTree(child.pid, { signal: "SIGKILL" });
+    hardExitTimer = setTimeout(() => {
+      try {
+        const cur = readJob(id) ?? job;
+        const { _exec, ...rest } = cur;
+        writeJob({
+          ...rest,
+          status: "timeout",
+          pid: null,
+          exit_code: null,
+          error: `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s);SIGKILL 后仍未退出,强制收尾`
+        });
+      } catch {
+        /* best effort */
+      }
+      releaseThread();
+      process.exit(0);
+    }, 5000);
+    hardExitTimer.unref?.();
   }, timeoutMs);
 
   const exit = await new Promise((resolve) => {
@@ -382,6 +403,7 @@ async function runUnderThreadLock(id, job, exec, client) {
 
   clearInterval(hb);
   clearTimeout(timer);
+  if (hardExitTimer) clearTimeout(hardExitTimer);
 
   // 清理 _exec(运行参数不长期保留)
   const stripExec = (extra) => {

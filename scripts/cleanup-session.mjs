@@ -6,8 +6,7 @@ import process from "node:process";
 import {
   finalizeJob,
   listRunningBySession,
-  persistSessionId,
-  readPersistedSessionId
+  persistSessionId
 } from "./lib/jobs.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
 
@@ -68,10 +67,14 @@ async function main() {
     return;
   }
 
-  // SessionEnd:清理本 session 的 running job。session id 取 stdin/env,
-  // 再回退到 SessionStart 落盘的值。
-  const effectiveId = sessionId ?? readPersistedSessionId();
-  const killed = cleanupSession(effectiveId);
+  // SessionEnd:只用 stdin/env 给出的 session id 清理。
+  // 不回退到 current-session 这个全局 singleton —— 多个 Claude session 并发时,
+  // 它只记最近启动的那个,用它清理可能误杀另一个 session 的 job。拿不到 id 就 no-op。
+  if (!sessionId) {
+    process.stdout.write("momo cleanup: 无 session id,跳过(避免误杀其他 session 的 job)\n");
+    return;
+  }
+  const killed = cleanupSession(sessionId);
   process.stdout.write(`momo cleanup: 杀掉 ${killed.length} 个 running job\n`);
 }
 

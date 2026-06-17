@@ -24,7 +24,9 @@ export default {
   //   "chat"(Chat Completions);codex-native 模型(gpt-5-codex)需 "responses"。
   //   未指定时默认 "chat"。由 model/provider 的可选 wire_api 字段驱动(resolve 透传)。
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi }) {
-    const wire = wireApi || "chat";
+    // 显式 wireApi 优先;否则按 model 自动判定:codex-native 模型(名字含 codex,
+    // 如 gpt-5-codex)走 "responses",普通 OpenAI 兼容端点走 "chat"。
+    const wire = wireApi || (/codex/i.test(String(modelId)) ? "responses" : "chat");
     const providerOverrides = [
       "-c", 'model_provider="momo"',
       "-c", 'model_providers.momo.name="momo"',

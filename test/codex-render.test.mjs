@@ -118,7 +118,8 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
   assert.match(joined, /model_providers\.momo\.wire_api="chat"/, "default wire_api is chat");
   assert.equal(codex.supportsResume, true);
 
-  const responses = codex.buildInvocation({
+  // codex-native 模型(名字含 codex)即使不传 wireApi,也应自动用 responses。
+  const auto = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "gpt-5-codex",
     baseUrl: "https://b",
@@ -126,9 +127,21 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
     effort: "high",
     sessionId: "cs-1",
     resume: false,
+  });
+  assert.match(auto.argv.join(" "), /model_providers\.momo\.wire_api="responses"/, "gpt-5-codex auto-defaults to responses");
+
+  // 显式 wireApi 覆盖仍然优先。
+  const explicit = codex.buildInvocation({
+    taskPrompt: "hi",
+    modelId: "some-openai-model",
+    baseUrl: "https://b",
+    apiKey: "k",
+    effort: "high",
+    sessionId: "cs-1",
+    resume: false,
     wireApi: "responses",
   });
-  assert.match(responses.argv.join(" "), /model_providers\.momo\.wire_api="responses"/);
+  assert.match(explicit.argv.join(" "), /model_providers\.momo\.wire_api="responses"/);
 });
 
 test("codex parseResult: from a log+JSONL mix, returns only the LAST agent message", () => {
