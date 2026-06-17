@@ -10,6 +10,9 @@ export default {
   protocol: "anthropic",
   allowedEffort: new Set(["low", "medium", "high", "xhigh", "max"]),
   supportsResume: true,
+  // 会话 id 在 work 创建时就用 --session-id 钉死,完成前即可知 → continue 可排队在
+  // 仍在运行的 base 后面(靠 thread 锁串行),不必等 base 完成。
+  sessionIdStable: true,
 
   // Pure: returns { command, argv, env, files }.
   // - env: vars to set/unset for the child. A value of `null` means UNSET.

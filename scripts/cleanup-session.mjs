@@ -99,15 +99,22 @@ async function main() {
     return;
   }
 
-  // SessionEnd:从活跃集合移除本 session;清理本 session 的 job。
-  // 若移除后已无活跃 session(这是最后一个),额外清掉无归属的 running job(防泄漏)。
-  if (sessionId) removeActiveSession(sessionId);
+  // SessionEnd:确定要结束的 session id。stdin/env 没给时,若**恰好一个活跃 session**,
+  // 可安全推断为它(单 session 场景,不会误判);多个活跃时不猜。
+  let endId = sessionId;
+  if (!endId) {
+    const act = activeSessions();
+    if (act.length === 1) endId = act[0];
+  }
+  if (endId) removeActiveSession(endId);
+
+  // 移除后已无活跃 session(这是最后一个)→ 额外清掉无归属 running job(防泄漏)。
   const lastSession = activeSessions().length === 0;
-  if (!sessionId && !lastSession) {
-    process.stdout.write("momo cleanup: 无 session id,跳过(避免误杀其他 session 的 job)\n");
+  if (!endId && !lastSession) {
+    process.stdout.write("momo cleanup: 无 session id 且有多个活跃 session,跳过(避免误杀)\n");
     return;
   }
-  const killed = cleanupSession(sessionId, { alsoUnowned: lastSession });
+  const killed = cleanupSession(endId, { alsoUnowned: lastSession });
   process.stdout.write(`momo cleanup: 杀掉 ${killed.length} 个 running job\n`);
 }
 

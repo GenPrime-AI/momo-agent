@@ -19,6 +19,8 @@ export const DEFAULT_TIMEOUT_MS = 600_000; // wall-clock 兜底上限
 
 // 终态集合
 const TERMINAL = new Set(["done", "failed", "timeout", "killed", "crashed"]);
+// 活动(未终态)状态:queued(已派发、排队等 thread 锁)+ running(真正在跑 client)。
+const ACTIVE = new Set(["queued", "running"]);
 
 export function nowIso() {
   return new Date().toISOString();
@@ -26,6 +28,10 @@ export function nowIso() {
 
 export function isTerminal(status) {
   return TERMINAL.has(status);
+}
+
+export function isActive(status) {
+  return ACTIVE.has(status);
 }
 
 export function ensureJobsDir() {
@@ -166,7 +172,8 @@ export function resolveJobRef(reference, predicate = () => true) {
   return null;
 }
 
-// 创建初始 running 记录(work/continue 派生后台进程后调用)。
+// 创建初始记录,状态为 **queued**(已派发、等 thread 锁)。__run-job 拿到锁、真正开跑
+// 时再 markRunning() 翻成 running 并把 started_at 重置为开跑时刻 —— 排队期间不计 wall-clock。
 export function createRunningJob({
   id,
   pid,
@@ -182,7 +189,7 @@ export function createRunningJob({
   const ts = nowIso();
   const record = {
     id,
-    status: "running",
+    status: "queued",
     pid,
     model,
     client,
@@ -199,6 +206,13 @@ export function createRunningJob({
   };
   writeJob(record);
   return record;
+}
+
+// 进入 thread 锁、真正开跑时调用:queued → running,并把 started_at/last_heartbeat
+// 重置为开跑时刻(排队等锁的时间不计入 wall-clock 超时)。
+export function markRunning(id) {
+  const ts = nowIso();
+  return patchJob(id, { status: "running", started_at: ts, last_heartbeat: ts });
 }
 
 // runner 周期心跳:更新 last_heartbeat。
@@ -223,6 +237,21 @@ export function assessJob(job, opts = {}) {
   const now = opts.now ?? Date.now();
   // 已是终态:直接返回,附带 staleness 信息便于渲染
   if (isTerminal(job.status)) {
+    return { ...job, suspectedStuck: false };
+  }
+
+  // queued:在等 thread 锁,**不计 wall-clock 超时**(还没开跑)。但若 runner 进程已死
+  // (排队中崩了),则判 crashed,并清掉可能已起的 client 子树。
+  if (job.status === "queued") {
+    if (!isAlive(job.pid)) {
+      if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
+      const updated = patchJob(job.id, {
+        status: "crashed",
+        pid: null,
+        error: job.error ?? "排队中进程退出(疑似硬崩)"
+      });
+      return { ...(updated ?? job), suspectedStuck: false };
+    }
     return { ...job, suspectedStuck: false };
   }
 
@@ -264,22 +293,22 @@ export function assessJob(job, opts = {}) {
   return { ...job, suspectedStuck };
 }
 
-// 取活动 job(running),做完存活判定后仍为 running 的。
+// 取活动 job(queued/running),做完存活判定后仍活动的。
 export function listActiveJobs() {
   return listJobs()
     .map((j) => assessJob(j))
-    .filter((j) => j.status === "running");
+    .filter((j) => isActive(j.status));
 }
 
-// 按 claude_session 取 running job(SessionEnd 清理用)。
+// 按 claude_session 取活动(queued/running)job(SessionEnd 清理用)。
 export function listRunningBySession(claudeSession) {
-  return listJobs().filter((j) => j.status === "running" && j.claude_session === claudeSession);
+  return listJobs().filter((j) => isActive(j.status) && j.claude_session === claudeSession);
 }
 
-// 无归属(claude_session 为空)的 running job —— 当最后一个活跃 session 结束、
+// 无归属(claude_session 为空)的活动 job —— 当最后一个活跃 session 结束、
 // 已无 session 能认领它们时,SessionEnd 据此清掉,避免泄漏。
 export function listRunningUnowned() {
-  return listJobs().filter((j) => j.status === "running" && !j.claude_session);
+  return listJobs().filter((j) => isActive(j.status) && !j.claude_session);
 }
 
 // 当前活跃 session 列表(SessionEnd 判断"是否最后一个"用)。

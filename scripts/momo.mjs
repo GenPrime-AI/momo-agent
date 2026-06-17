@@ -22,6 +22,7 @@ import {
   isTerminal,
   jobLogFile,
   listJobs,
+  markRunning,
   readJob,
   resolveJobRef,
   soleActiveSession,
@@ -214,13 +215,15 @@ function cmdContinue(argv) {
   if (client.supportsResume === false) {
     fail(`client "${base.client}" 暂不支持 continue/resume`);
   }
-  // 只能续接已完成(done)的 job:对 codex 这类 client,可 resume 的真实会话 id 是在
-  // 任务完成、解析子进程输出后才回填的;若原 job 仍在跑或异常终止,session_id 还是
-  // 占位 UUID,续接会接到错误/不存在的线程。
-  if (base.status !== "done") {
+  // 会话 id 是否"完成前就稳定":
+  //  - claude:work 时用 --session-id 钉死,稳定 → continue 可排队在仍运行的 base 后面
+  //    (靠同 thread_key 锁串行),无需等 base 完成。
+  //  - codex:真实 resume id 要解析完成后的输出才知,不稳定 → 只能续接已完成(done)的 base,
+  //    否则 session_id 仍是占位 UUID,会接到错误/不存在的线程。
+  if (client.sessionIdStable !== true && base.status !== "done") {
     fail(
-      `job ${base.id} 当前是 "${base.status}",只能 continue 已完成(done)的 job。` +
-        `请用 /momo:status 等它完成后再续接。`
+      `job ${base.id} 当前是 "${base.status}";client "${base.client}" 的会话 id 要等任务完成才确定,` +
+        `请用 /momo:status 等它完成后再 continue。`
     );
   }
   if (!base.session_id) {
@@ -315,13 +318,9 @@ async function cmdRunJob(argv) {
 async function runUnderThreadLock(id, job, exec, client) {
   const releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: 600_000 });
 
-  // 进入锁后(可能已在队列里等了很久)才把 started_at 重置为真正开跑的时刻 ——
-  // 否则排在长任务后面的 continue 会把排队时间算进 wall-clock,被 status 误判 timeout。
-  {
-    const cur = readJob(id) ?? job;
-    const ts = new Date().toISOString();
-    writeJob({ ...cur, started_at: ts, last_heartbeat: ts });
-  }
+  // 进入锁后(可能已在队列里等了很久)才 queued → running,并把 started_at 重置为真正
+  // 开跑时刻 —— 排队期间不计 wall-clock,status 也不会把排队中的 job 误判为卡死/超时。
+  markRunning(id);
 
   let invocation;
   try {

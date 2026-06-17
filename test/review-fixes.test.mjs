@@ -183,9 +183,31 @@ test("P2: per-model timeout_ms in config is honoured (not the 600s default)", as
   }
 });
 
-test("P2: continue is rejected while the base job is still running", async () => {
+test("P2: continue on a still-running codex job is rejected (session id not stable yet)", async () => {
   const h = setup();
   try {
+    // codex's resume session id is only known after completion -> reject while running.
+    const base = runMomo(["work", "--model", "gpt-5-codex", "--client", "codex", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const baseId = base.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, baseId, (j) => j.status === "running" && j.pid > 0);
+
+    const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
+    assert.notEqual(cont.status, 0, "codex continue must wait for the base to be done");
+    assert.match(cont.stderr, /完成才确定|done|完成/);
+
+    runMomo(["cancel", baseId], { home: h.home });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P1: continue on a still-running claude job is allowed (queued behind it via thread lock)", async () => {
+  const h = setup();
+  try {
+    // claude pins --session-id up front, so a follow-up can queue behind a running job.
     const base = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
       home: h.home,
       env: { MOCK_BEHAVIOR: "hang" },
@@ -194,10 +216,14 @@ test("P2: continue is rejected while the base job is still running", async () =>
     await waitForJob(h.momoHome, baseId, (j) => j.status === "running" && j.pid > 0);
 
     const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
-    assert.notEqual(cont.status, 0, "must refuse to continue a non-done job");
-    assert.match(cont.stderr, /只能 continue 已完成|done/);
+    assert.equal(cont.status, 0, cont.stderr); // accepted, not rejected
+    const contId = cont.stdout.match(/job\s+([^\s(]+)/)[1];
+    // the queued continuation exists and is not terminal yet (waiting on the lock)
+    const q = readJobFile(h.momoHome, contId);
+    assert.ok(q && (q.status === "queued" || q.status === "running"), "continuation should be active/queued");
 
-    runMomo(["cancel", baseId], { home: h.home }); // clean up the hang
+    runMomo(["cancel", baseId], { home: h.home });
+    runMomo(["cancel", contId], { home: h.home });
   } finally {
     h.cleanup();
   }

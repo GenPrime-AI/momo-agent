@@ -18,6 +18,8 @@ export default {
   protocol: "openai",
   allowedEffort: new Set(["none", "minimal", "low", "medium", "high", "xhigh"]),
   supportsResume: true,
+  // codex 真实可 resume 的会话 id 要解析子进程输出后才知 → 只能续接已完成的 base。
+  sessionIdStable: false,
 
   // Pure: returns { command, argv, env, files }.
   //   wireApi: openai 兼容端点的协议类型。普通 OpenAI 兼容(如 GLM /paas/v4)用

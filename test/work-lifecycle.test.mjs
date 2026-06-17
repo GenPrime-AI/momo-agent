@@ -58,7 +58,7 @@ test("crash: client exits non-zero -> status=failed with error", async () => {
       env: { MOCK_BEHAVIOR: "crash" },
     });
     const id = parseJobId(r.stdout);
-    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running");
+    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
     assert.equal(job.status, "failed");
     assert.ok(job.error && job.error.length > 0, "failed job must carry an error");
   } finally {
@@ -74,7 +74,7 @@ test("authfail stderr maps to an auth-friendly error", async () => {
       env: { MOCK_BEHAVIOR: "authfail" },
     });
     const id = parseJobId(r.stdout);
-    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running");
+    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
     assert.equal(job.status, "failed");
     assert.match(job.error, /鉴权/);
   } finally {
@@ -90,7 +90,7 @@ test("netfail stderr maps to a connectivity-friendly error", async () => {
       env: { MOCK_BEHAVIOR: "netfail" },
     });
     const id = parseJobId(r.stdout);
-    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running");
+    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
     assert.equal(job.status, "failed");
     assert.match(job.error, /网络/);
   } finally {
