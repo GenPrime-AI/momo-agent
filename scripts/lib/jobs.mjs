@@ -229,6 +229,18 @@ export function markRunning(id) {
   });
 }
 
+// 非终态字段 backfill(pid / client_pid 等):锁内 + 终态守卫。若 job 已被 cancel/cleanup
+// 置终态,绝不用陈旧活动快照写回去复活它。job 不存在则不写。
+export function patchIfActive(id, patch) {
+  return withLock(jobLockName(id), () => {
+    const cur = readJob(id);
+    if (!cur || isTerminal(cur.status)) return cur;
+    const next = { ...cur, ...patch };
+    writeJob(next);
+    return next;
+  });
+}
+
 // runner 周期心跳:更新 last_heartbeat。锁内 + 终态守卫:若 job 已被 cancel/cleanup/assess
 // 置终态,绝不把陈旧的 running 记录(及 _exec)写回去复活它。
 export function heartbeat(id) {

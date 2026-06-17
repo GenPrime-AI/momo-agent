@@ -24,6 +24,7 @@ import {
   jobLogFile,
   listJobs,
   markRunning,
+  patchIfActive,
   readJob,
   resolveJobRef,
   soleActiveSession,
@@ -277,11 +278,10 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     cwd,
     timeout_ms: ctx.timeoutMs
   });
-  // 附加 runner 需要、但不属于状态契约的字段。
-  // 注意:api_key **不写进 job 文件**(避免明文密钥落进 ~/.momo/jobs/*.json,SIGKILL 后也不残留)
-  // —— 改用 runner 进程的环境变量 MOMO_JOB_API_KEY 传递(仅在内存中)。
-  writeJob({
-    ...record,
+  // 附加 runner 需要、但不属于状态契约的字段(加锁守卫:若刚创建就被 SessionEnd 清掉,
+  // 不复活)。注意:api_key **不写进 job 文件**(避免明文密钥落进 ~/.momo/jobs/*.json,
+  // SIGKILL 后也不残留)—— 改用 runner 进程的环境变量 MOMO_JOB_API_KEY 传递(仅在内存中)。
+  patchIfActive(id, {
     _exec: {
       modelId: ctx.modelId,
       baseUrl: ctx.baseUrl,
@@ -300,8 +300,8 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     env: { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey },
     logFile: jobLogFile(id)
   });
-  // detached 进程组 leader 的 pid 即整树根
-  writeJob({ ...readJob(id), pid });
+  // 回填 runner pid(加锁守卫:job 若已被取消/清理,不被陈旧快照复活)。
+  patchIfActive(id, { pid });
 }
 
 // ——— __run-job(内部):detached 子进程,真正跑 client、心跳、写终态 ———
@@ -314,8 +314,12 @@ async function cmdRunJob(argv) {
   if (!job || !job._exec) {
     process.exit(2);
   }
-  // 回填自身 pid(detached leader)。
-  writeJob({ ...job, pid: process.pid });
+  // 回填自身 pid(detached leader),加锁守卫:若 work 返回后立刻被 cancel/SessionEnd 置终态,
+  // 不复活它,且 runner 直接退出(不再起 client)。
+  const started = patchIfActive(id, { pid: process.pid });
+  if (!started || isTerminal(started.status)) {
+    process.exit(0);
+  }
 
   const exec = job._exec;
   const client = getClient(job.client);
@@ -383,11 +387,13 @@ async function runUnderThreadLock(id, job, exec, client) {
     stdio: ["ignore", "pipe", "pipe"]
   });
 
-  // 持久化 client 进程组 leader pid,让 cancel/cleanup 能**直接**杀 client 子树(加速路径;
-  // 即便此前落盘,孤儿也已由上面的 SIGTERM 处理器兜底)。
-  {
-    const cur = readJob(id) ?? job;
-    writeJob({ ...cur, client_pid: child.pid });
+  // 持久化 client 进程组 leader pid(加锁守卫)。若发现 job 在我们 spawn client 的瞬间已被
+  // 取消/清理(终态),立即杀掉刚起的 client 并退出 —— 不复活 job,也不留孤儿。
+  const pj = patchIfActive(id, { client_pid: child.pid });
+  if (!pj || isTerminal(pj.status)) {
+    terminateProcessTree(child.pid, { signal: "SIGKILL" });
+    releaseThread();
+    process.exit(0);
   }
 
   let stdout = "";
