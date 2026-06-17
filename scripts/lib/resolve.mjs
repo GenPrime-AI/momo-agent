@@ -284,7 +284,7 @@ export function resolve(config, opts = {}) {
   }
 
   // Optional wire_api (only for the openai protocol / codex client): model takes precedence,
-  // then provider; if absent let the adapter decide (codex defaults to chat).
+  // then provider; if absent let the adapter decide (codex >=0.139 defaults to responses).
   const wireApi = modelDef.wire_api ?? provider.wire_api ?? null;
 
   // Optional per-model/provider timeout (ms). Returns null when absent; the caller falls back to DEFAULT_TIMEOUT_MS.

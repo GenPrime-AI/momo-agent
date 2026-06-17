@@ -21,13 +21,15 @@ export default {
   sessionIdStable: false,
 
   // Pure: returns { command, argv, env, files }.
-  //   wireApi: protocol type of the OpenAI-compatible endpoint. Plain OpenAI-compatible (e.g. GLM /paas/v4) uses
-  //   "chat" (Chat Completions); codex-native models (gpt-5-codex) need "responses".
-  //   Defaults to "chat" when unspecified. Driven by the optional wire_api field on the model/provider (passed through by resolve).
+  //   wireApi: which OpenAI wire protocol codex speaks to the endpoint. codex >=0.139 REMOVED
+  //   `wire_api="chat"` (Chat Completions) — it now only loads `wire_api="responses"` (the Responses API),
+  //   so that is the default. An explicit wire_api on the model/provider (passed through by resolve) still
+  //   wins verbatim, e.g. forcing "chat" for an older codex.
+  //   NOTE: a Chat-Completions-only endpoint (no /responses route, e.g. api.xiaomimimo.com/v1) can no longer
+  //   be driven by codex on these versions — it returns 404; drive such providers via the anthropic client.
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi }) {
-    // Explicit wireApi wins; otherwise auto-detect by model: codex-native models (name contains codex,
-    // e.g. gpt-5-codex) use "responses", plain OpenAI-compatible endpoints use "chat".
-    const wire = wireApi || (/codex/i.test(String(modelId)) ? "responses" : "chat");
+    // Explicit wireApi wins; otherwise default to "responses" (the only value codex >=0.139 accepts).
+    const wire = wireApi || "responses";
     const providerOverrides = [
       "-c", 'model_provider="momo"',
       "-c", 'model_providers.momo.name="momo"',

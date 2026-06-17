@@ -108,7 +108,7 @@ test("codex buildInvocation: resume uses 'exec resume <session>'", () => {
   assert.equal(inv.env.MOMO_API_KEY, "k");
 });
 
-test("codex buildInvocation: fresh run injects --json + wire_api(default chat) + responses override", () => {
+test("codex buildInvocation: fresh run injects --json + wire_api(default responses) + explicit override", () => {
   const fresh = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "glm-5.2",
@@ -120,10 +120,11 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
   });
   const joined = fresh.argv.join(" ");
   assert.ok(fresh.argv.includes("--json"), "must request JSONL events");
-  assert.match(joined, /model_providers\.momo\.wire_api="chat"/, "default wire_api is chat");
+  // codex >=0.139 removed wire_api="chat"; "responses" is the only value it loads, so it's the default.
+  assert.match(joined, /model_providers\.momo\.wire_api="responses"/, "default wire_api is responses");
   assert.equal(codex.supportsResume, true);
 
-  // codex-native models (name contains "codex") should auto-use responses even without an explicit wireApi.
+  // codex-native models (name contains "codex") also use responses.
   const auto = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "gpt-5-codex",
@@ -133,9 +134,9 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
     sessionId: "cs-1",
     resume: false,
   });
-  assert.match(auto.argv.join(" "), /model_providers\.momo\.wire_api="responses"/, "gpt-5-codex auto-defaults to responses");
+  assert.match(auto.argv.join(" "), /model_providers\.momo\.wire_api="responses"/, "gpt-5-codex uses responses");
 
-  // an explicit wireApi override still takes precedence.
+  // an explicit wireApi override still passes through verbatim (e.g. forcing "chat" for an older codex).
   const explicit = codex.buildInvocation({
     taskPrompt: "hi",
     modelId: "some-openai-model",
@@ -144,9 +145,9 @@ test("codex buildInvocation: fresh run injects --json + wire_api(default chat) +
     effort: "high",
     sessionId: "cs-1",
     resume: false,
-    wireApi: "responses",
+    wireApi: "chat",
   });
-  assert.match(explicit.argv.join(" "), /model_providers\.momo\.wire_api="responses"/);
+  assert.match(explicit.argv.join(" "), /model_providers\.momo\.wire_api="chat"/, "explicit wireApi wins");
 });
 
 test("codex parseResult: from a log+JSONL mix, returns only the LAST agent message", () => {
