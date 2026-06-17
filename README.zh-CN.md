@@ -41,14 +41,21 @@ claude plugin install momo@momo-agent
 
 ## 配置
 
-`/momo:config` 是对话式的 —— 直接运行它,然后用自然语言说要配什么,例如:
+`/momo:config` 是**对话式**的,不带参数。直接运行它,momo 会反问你要配什么、一步步引导,你用自然语言逐项回答。它**不预设任何 provider 或模型**,只存你告诉它的。例如:
 
 ```
-/momo:config
-> 智谱的 key 是 <KEY>,base url 用官方 anthropic 那个,模型 glm-5.2,effort high/medium/low
+你:    /momo:config
+momo:  要配置什么?(某个 provider 的 endpoint + key · 一个模型 · 某模型的默认 client/effort)
+你:    加一个 provider
+momo:  哪个 provider,走什么协议,base URL 和 API key 是?
+你:    …
+momo:  在它上面加个模型吗?(provider · 传给 client 的 model_id · 哪些 client 能驱动 · effort 选项)
+你:    …
+momo:  我将保存:<回显结构化配置>,确认?
+你:    确认
 ```
 
-它会写入 `~/.momo/config.json`(明文 key,留在你本机,绝不进仓库)。结构:
+它会写入 `~/.momo/config.json`(明文 key,留在你本机,绝不进仓库)。结构(下面填了一个示例仅作说明):
 
 ```jsonc
 {
@@ -104,12 +111,12 @@ claude plugin install momo@momo-agent
 
 ## 客户端与协议
 
-| 客户端 | 协议 | 可驱动 | 客户端 CLI 接受的 effort |
-|---|---|---|---|
-| `claude` | anthropic | GLM、Claude、DeepSeek、Kimi、MiniMax、Qwen…(任何 Anthropic 兼容端点) | `low`、`medium`、`high`、`xhigh`、`max` |
-| `codex` | openai | OpenAI / OpenAI 兼容端点 | `none`、`minimal`、`low`、`medium`、`high`、`xhigh` |
+| 客户端 | 协议 | 可驱动 |
+|---|---|---|
+| `claude` | anthropic | Claude,以及任何 Anthropic 兼容端点(GLM、DeepSeek、Kimi、MiniMax、Qwen…) |
+| `codex` | openai | OpenAI,以及任何 OpenAI 兼容端点 |
 
-右列是**客户端 CLI** 能接受的 effort 取值,**不代表**每个模型都支持这些档位。具体某个模型/厂商可能只支持其中一部分,或者根本不理会 effort(比如 GLM、DeepSeek 等各自有自己的思考/effort 行为)。某个模型实际提供哪些档位,由它在 `~/.momo/config.json` 里的 `effort` 列表声明;momo 只接受**既在该模型列表里、又被所选 client 认可**的 effort。
+**关于 effort。** 每个客户端 CLI *接受*一组固定的 effort/思考档位 —— `claude`:`low / medium / high / xhigh / max`;`codex`:`none / minimal / low / medium / high / xhigh`。但 effort 只有该客户端**自家**的模型才真正生效(`claude` 对 Anthropic 自家模型、`codex` 对 OpenAI 自家模型)。**大多数第三方 Anthropic/OpenAI 兼容模型 —— GLM、DeepSeek、Kimi、MiniMax、Qwen… —— 根本没有 effort/思考控制。** 少数有(例如 `GLM-5.2`,用它自己的 model id 和自己的档位)。所以某模型的 `effort` 列表只填*该模型实际支持的*——往往只有一个值,或干脆不填。momo 只接受既在该模型列表里、又被所选 client 认可的 effort。
 
 新增一个 client = 加一个适配器文件;registry/运行时不用改。
 

@@ -41,14 +41,21 @@ Restart / start a new Claude Code session, then the `/momo:*` commands are avail
 
 ## Configure
 
-`/momo:config` is conversational — just run it and say what to set, e.g.:
+`/momo:config` is **conversational** and takes no arguments. Run it; momo asks what you want to set and walks you through it — you answer in plain language, step by step. It never assumes a provider or model; it only stores what you tell it. For example:
 
 ```
-/momo:config
-> zhipu's key is <KEY>, base url is the official anthropic one, model glm-5.2, effort high/medium/low
+You:   /momo:config
+momo:  What would you like to set? (a provider's endpoint + key · a model · a model's default client/effort)
+You:   add a provider
+momo:  Which provider, its protocol(s), base URL, and API key?
+You:   …
+momo:  And a model on it? (provider · the model_id sent to the client · which clients can drive it · effort options)
+You:   …
+momo:  Here's what I'll save: <echoes the structured config>. Confirm?
+You:   yes
 ```
 
-It writes `~/.momo/config.json` (plaintext keys — kept on your machine, never in this repo). Shape:
+It writes `~/.momo/config.json` (plaintext keys — kept on your machine, never in this repo). The shape (one filled-in example shown for illustration):
 
 ```jsonc
 {
@@ -104,12 +111,12 @@ Unspecified `--client` / `--effort` fall back to the model's first configured op
 
 ## Clients & protocols
 
-| Client | Protocol | Drives | Effort levels the CLI accepts |
-|---|---|---|---|
-| `claude` | anthropic | GLM, Claude, DeepSeek, Kimi, MiniMax, Qwen … (any Anthropic-compatible endpoint) | `low`, `medium`, `high`, `xhigh`, `max` |
-| `codex` | openai | OpenAI / OpenAI-compatible endpoints | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+| Client | Protocol | Drives |
+|---|---|---|
+| `claude` | anthropic | Claude, plus any Anthropic-compatible endpoint (GLM, DeepSeek, Kimi, MiniMax, Qwen, …) |
+| `codex` | openai | OpenAI, plus any OpenAI-compatible endpoint |
 
-The right-hand column is the set of effort values the **client CLI** will accept — **not** a promise that every model honors all of them. A given model / provider may support only a subset, or ignore effort entirely (e.g. GLM, DeepSeek and others each expose their own thinking/effort behavior). You declare the levels a specific model actually offers in its `effort` list in `~/.momo/config.json`, and momo only accepts an effort that is **both** in that model's list **and** legal for the chosen client.
+**About effort.** Each client CLI *accepts* a fixed set of effort/thinking levels — `claude`: `low / medium / high / xhigh / max`; `codex`: `none / minimal / low / medium / high / xhigh`. But effort is only meaningfully honored by the client's **own** models (Anthropic's for `claude`, OpenAI's for `codex`). **Most third-party Anthropic/OpenAI-compatible models — GLM, DeepSeek, Kimi, MiniMax, Qwen, … — expose no effort/thinking control at all.** A few do (e.g. `GLM-5.2`, under its own model id and its own levels). So set a model's `effort` list to what *that specific model* actually supports — often just one value, or leave it out. momo only accepts an effort that is in the model's configured list **and** legal for the chosen client.
 
 Adding a client = adding one adapter file; the registry/runtime don't change.
 
