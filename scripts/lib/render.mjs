@@ -71,11 +71,12 @@ export function renderStatusList(jobs) {
   if (!jobs || jobs.length === 0) {
     return "没有 momo job。用 /momo:work 派发一个。";
   }
-  const running = jobs.filter((j) => j.status === "running");
-  const finished = jobs.filter((j) => j.status !== "running");
+  const isActive = (s) => s === "running" || s === "queued"; // queued=排队等锁,也算进行中
+  const running = jobs.filter((j) => isActive(j.status));
+  const finished = jobs.filter((j) => !isActive(j.status));
   const sections = [];
   if (running.length) {
-    sections.push(["运行中:", ...running.map((j) => `  ${jobLine(j)}`)].join("\n"));
+    sections.push(["进行中:", ...running.map((j) => `  ${jobLine(j)}`)].join("\n"));
     if (running.some((j) => j.suspectedStuck)) {
       sections.push("提示:疑似卡死的 job 可用 /momo:cancel <job-id> 终止。");
     }
@@ -117,6 +118,9 @@ export function renderStatusOne(job) {
 export function renderResult(job, resultText) {
   if (job.status === "done") {
     return resultText && resultText.trim() ? resultText : "(job 完成,但无输出文本)";
+  }
+  if (job.status === "queued") {
+    return `job ${job.id} 仍在排队(等同线程上一个任务完成),尚未开始。用 /momo:status ${job.id} 查看。`;
   }
   if (job.status === "running") {
     const stuck = job.suspectedStuck ? "(疑似卡死)" : "";

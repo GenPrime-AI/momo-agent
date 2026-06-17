@@ -9,7 +9,9 @@ import path from "node:path";
 import { isAlive, terminateProcessTree } from "./process.mjs";
 import { withLock } from "./lock.mjs";
 
-const MOMO_HOME = path.join(os.homedir(), ".momo");
+// 与 config.mjs 一致:MOMO_HOME 环境变量优先(测试/隔离安装/wrapper 用),否则 ~/.momo。
+// 三处(config/jobs/lock)必须对齐,否则 config 与 job/log/锁 落在不同树,status/result/清理读不到。
+const MOMO_HOME = process.env.MOMO_HOME || path.join(os.homedir(), ".momo");
 const JOBS_DIR = path.join(MOMO_HOME, "jobs");
 const ACTIVE_SESSIONS_FILE = path.join(MOMO_HOME, "active-sessions.json");
 

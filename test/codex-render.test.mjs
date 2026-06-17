@@ -12,7 +12,7 @@ import {
   waitForJob,
 } from "./helpers.mjs";
 
-import { renderModelList, renderStatusList } from "../scripts/lib/render.mjs";
+import { renderModelList, renderStatusList, renderResult } from "../scripts/lib/render.mjs";
 import claude from "../scripts/lib/clients/claude.mjs";
 import codex from "../scripts/lib/clients/codex.mjs";
 
@@ -174,4 +174,16 @@ test("renderModelList marks defaults with *", () => {
 
 test("renderStatusList handles empty input", () => {
   assert.match(renderStatusList([]), /没有 momo job/);
+});
+
+test("queued jobs render as in-progress, not finished", () => {
+  const list = renderStatusList([
+    { id: "j-1", status: "queued", model: "glm-5.2", client: "claude", effort: "high", started_at: "x" },
+  ]);
+  assert.match(list, /进行中/);
+  assert.doesNotMatch(list, /已结束/);
+
+  const res = renderResult({ id: "j-1", status: "queued" }, null);
+  assert.match(res, /排队|尚未开始/);
+  assert.doesNotMatch(res, /没有可取的成功结果/);
 });

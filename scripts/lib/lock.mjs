@@ -7,7 +7,8 @@ import path from "node:path";
 
 import { isAlive } from "./process.mjs";
 
-const LOCK_ROOT = path.join(os.homedir(), ".momo", "locks");
+// MOMO_HOME 优先,与 config.mjs / jobs.mjs 对齐(否则锁与状态落在不同树)。
+const LOCK_ROOT = path.join(process.env.MOMO_HOME || path.join(os.homedir(), ".momo"), "locks");
 const STALE_MS = 60_000; // 锁老于此且持有者已死 → 可抢占
 const DEFAULT_TIMEOUT_MS = 10_000;
 const POLL_MS = 50;
