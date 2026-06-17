@@ -41,7 +41,15 @@ export default {
     // 隔离:--ignore-user-config(不加载 $CODEX_HOME/config.toml)+ --ignore-rules(不加载
     // 用户/项目 .rules)—— 委派行为只由任务正文 + 所选 provider/model 决定,跨机器一致(SPEC §2.3)。
     // --json:事件以 JSONL 打到 stdout,parseResult 取最后的 agent 消息(而非掺日志的整段)。
-    const iso = ["--ignore-user-config", "--ignore-rules", "--json", "--skip-git-repo-check"];
+    // --dangerously-bypass-approvals-and-sandbox:委派 headless,无人批准;默认 bypass 让 codex 能
+    // 自主执行/读写(建议在隔离 worktree)。与 claude 适配器的 --dangerously-skip-permissions 对齐。
+    const iso = [
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--json",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox"
+    ];
     let argv;
     if (resume) {
       // 形态:codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]

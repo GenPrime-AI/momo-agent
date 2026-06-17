@@ -162,6 +162,13 @@ export default {
 - `parseResult`:codex exec 的最终输出解析。
 - 自检:`which codex` 存在即可用;不存在 → 友好报错。
 
+### 5.3 委派默认 bypass 权限
+委派是 headless 后台运行,没有人能点权限弹窗。因此适配器默认开启"绕过权限/沙箱"
+(claude:`--dangerously-skip-permissions`;codex:`--dangerously-bypass-approvals-and-sandbox`),
+让委派模型能自主在**工作目录**内读写文件、跑工具,否则一遇权限请求就永久卡住。委派子进程的
+工作目录 = 调用 momo 时的 cwd(claude 的读写被限制在该目录内);并行写文件的任务建议各自跑在
+隔离 git worktree 里(由编排者负责,见 §2.4)。
+
 > 适配器是唯一知道"各 client 怎么配"的地方。新增 client = 加一个适配器文件,registry/runtime 不改。
 
 ## 6. 命令面(全部在 `commands/` 下,plugin 名 momo)
