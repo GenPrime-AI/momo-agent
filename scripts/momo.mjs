@@ -33,7 +33,13 @@ import {
   threadKey
 } from "./lib/jobs.mjs";
 import { acquireLock, threadLockName } from "./lib/lock.mjs";
-import { binaryAvailable, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
+import {
+  binaryAvailable,
+  procToken,
+  spawnDetached,
+  terminateProcessTree,
+  terminateTreeIfOurs
+} from "./lib/process.mjs";
 import {
   renderCancel,
   renderModelList,
@@ -355,8 +361,8 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     finalizeJob(id, { status: "failed", error: `后台 runner 启动失败: ${error.message}` });
     fail(`无法启动后台任务: ${error.message}`);
   }
-  // 回填 runner pid(加锁守卫:job 若已被取消/清理,不被陈旧快照复活)。
-  patchIfActive(id, { pid });
+  // 回填 runner pid + 身份 token(加锁守卫:job 若已被取消/清理,不被陈旧快照复活)。
+  patchIfActive(id, { pid, pid_token: procToken(pid) });
 }
 
 // ——— __run-job(内部):detached 子进程,真正跑 client、心跳、写终态 ———
@@ -369,9 +375,9 @@ async function cmdRunJob(argv) {
   if (!job || !job._exec) {
     process.exit(2);
   }
-  // 回填自身 pid(detached leader),加锁守卫:若 work 返回后立刻被 cancel/SessionEnd 置终态,
-  // 不复活它,且 runner 直接退出(不再起 client)。
-  const started = patchIfActive(id, { pid: process.pid });
+  // 回填自身 pid + 身份 token(detached leader),加锁守卫:若 work 返回后立刻被 cancel/SessionEnd
+  // 置终态,不复活它,且 runner 直接退出(不再起 client)。
+  const started = patchIfActive(id, { pid: process.pid, pid_token: procToken(process.pid) });
   if (!started || isTerminal(started.status)) {
     process.exit(0);
   }
@@ -484,7 +490,7 @@ async function runUnderThreadLock(id, job, exec, client) {
 
   // 持久化 client 进程组 leader pid(加锁守卫)。若发现 job 在我们 spawn client 的瞬间已被
   // 取消/清理(终态),立即杀掉刚起的 client 并退出 —— 不复活 job,也不留孤儿。
-  const pj = patchIfActive(id, { client_pid: child.pid });
+  const pj = patchIfActive(id, { client_pid: child.pid, client_pid_token: procToken(child.pid) });
   if (!pj || isTerminal(pj.status)) {
     terminateProcessTree(child.pid, { signal: "SIGKILL" });
     releaseThread();
@@ -658,13 +664,11 @@ function cmdCancel(argv) {
   if (isTerminal(job.status)) {
     fail(`job ${job.id} 已是终态 (${job.status}),无需取消`);
   }
-  // 先直接杀 client 子树(SIGKILL),再杀 runner 组 —— 不依赖 runner 的 relay,
-  // 避免 runner 已崩时 client 成孤儿。
-  if (job.client_pid) {
-    terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
-  }
-  const result = terminateProcessTree(job.pid);
+  // 先认领终态(killed)——终态吸收保证它必胜:即便杀 client 触发了 runner 的 close 处理、
+  // runner 想写 failed,也会被吸收成 no-op。再验身份杀进程(PID 复用则跳过,绝不误杀)。
   finalizeJob(job.id, { status: "killed", error: "用户取消" });
+  terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
+  const result = terminateTreeIfOurs(job.pid, job.pid_token);
   process.stdout.write(`${renderCancel(job, result)}\n`);
 }
 

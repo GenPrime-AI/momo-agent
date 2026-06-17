@@ -13,19 +13,16 @@ import {
   listRunningUnowned,
   removeActiveSession
 } from "./lib/jobs.mjs";
-import { terminateProcessTree } from "./lib/process.mjs";
+import { terminateTreeIfOurs } from "./lib/process.mjs";
 
 const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
 const MOMO_SESSION_ID_ENV = "MOMO_SESSION_ID";
 
 function killJob(job, reason) {
-  // 先直接杀 client 子树(SIGKILL),不依赖 runner 的 SIGTERM relay,避免孤儿。
-  if (job.client_pid) {
-    terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
-  }
-  // 再杀 __run-job(detached 组 leader);其 SIGTERM 处理器作为双保险。
-  terminateProcessTree(job.pid, { signal: "SIGTERM" });
+  // 先认领终态(killed,终态吸收保证必胜 runner 的 close 收尾),再验身份杀进程(PID 复用则跳过)。
   finalizeJob(job.id, { status: "killed", error: reason });
+  terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
+  terminateTreeIfOurs(job.pid, job.pid_token, { signal: "SIGTERM" });
 }
 
 // 杀 claude_session == sessionId 的所有 running job;opts.alsoUnowned=true 时,额外杀掉

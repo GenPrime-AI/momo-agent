@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { isAlive } from "./process.mjs";
+import { aliveAndOurs, procToken } from "./process.mjs";
 
 // MOMO_HOME 优先,与 config.mjs / jobs.mjs 对齐(否则锁与状态落在不同树)。
 const LOCK_ROOT = path.join(process.env.MOMO_HOME || path.join(os.homedir(), ".momo"), "locks");
@@ -59,10 +59,11 @@ function isStale(dir) {
     }
   }
   const age = Date.now() - (meta.acquiredAt ?? 0);
-  if (meta.pid && isAlive(meta.pid)) {
-    return false; // 持有者活着,不抢
+  // 持有者"仍是当初那个进程"才算活(PID 被复用 → token 不匹配 → 视为已死,可抢,避免永久占锁)。
+  if (meta.pid && aliveAndOurs(meta.pid, meta.token)) {
+    return false;
   }
-  // 持有者已死 → 立即可抢(也兼顾老锁)
+  // 持有者已死/被复用 → 立即可抢(也兼顾老锁)
   return !meta.pid || age > 0 ? true : age > STALE_MS;
 }
 
@@ -84,7 +85,7 @@ export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     if (attemptMkdir(dir)) {
       fs.writeFileSync(
         path.join(dir, "meta.json"),
-        JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }),
+        JSON.stringify({ pid: process.pid, token: procToken(process.pid), acquiredAt: Date.now() }),
         "utf8"
       );
       let released = false;

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { isAlive, terminateProcessTree } from "./process.mjs";
+import { aliveAndOurs, terminateTreeIfOurs } from "./process.mjs";
 import { withLock } from "./lock.mjs";
 
 // 与 config.mjs 一致:MOMO_HOME 环境变量优先(测试/隔离安装/wrapper 用),否则 ~/.momo。
@@ -248,6 +248,8 @@ export function createRunningJob({
     id,
     status: "queued",
     pid,
+    pid_token: null,
+    client_pid_token: null,
     seq,
     model,
     client,
@@ -332,11 +334,12 @@ export function assessJob(job, opts = {}) {
     return { ...job, suspectedStuck: false };
   }
 
-  // queued:在等 thread 锁,**不计 wall-clock 超时**(还没开跑)。但若 runner 进程已死
-  // (排队中崩了),则判 crashed,并清掉可能已起的 client 子树。
+  // queued:在等 thread 锁,**不计 wall-clock 超时**(还没开跑)。
+  // 只有在 runner pid 已**真正回填**(pid>0 且有身份)却不再存活时,才判 crashed —— 否则
+  // pid 仍是占位 0(刚创建、runner 还没 backfill)会被并发 status 误判 crashed、丢掉合法 job。
   if (job.status === "queued") {
-    if (!isAlive(job.pid)) {
-      if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
+    if (job.pid > 0 && !aliveAndOurs(job.pid, job.pid_token)) {
+      terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
       const updated = finalizeJob(job.id, {
         status: "crashed",
         error: job.error ?? "排队中进程退出(疑似硬崩)"
@@ -356,8 +359,8 @@ export function assessJob(job, opts = {}) {
   const startedMs = Date.parse(job.started_at ?? "");
   const timeoutMs = Number.isFinite(job.timeout_ms) ? job.timeout_ms : DEFAULT_TIMEOUT_MS;
   if (Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
-    if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
-    if (job.pid) terminateProcessTree(job.pid, { signal: "SIGKILL" });
+    terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
+    terminateTreeIfOurs(job.pid, job.pid_token, { signal: "SIGKILL" });
     const updated = finalizeJob(job.id, {
       status: "timeout",
       error: job.error ?? `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s),已杀进程树`
@@ -365,10 +368,10 @@ export function assessJob(job, opts = {}) {
     return { ...(updated ?? job), suspectedStuck: false };
   }
 
-  // 2. pid 探活:status==running 但 runner pid 已死 → crashed(硬崩没写终态)。
-  // runner 死了但 client 可能仍存活(被孤立)→ 一并杀掉 client 子树,杜绝孤儿。
-  if (!isAlive(job.pid)) {
-    if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
+  // 2. pid 探活:status==running 但 runner 进程已死(或 PID 被复用,非当初那个)→ crashed。
+  // runner 死了但 client 可能仍存活(被孤立)→ 一并(验身份后)杀掉 client 子树,杜绝孤儿。
+  if (!aliveAndOurs(job.pid, job.pid_token)) {
+    terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
     const updated = finalizeJob(job.id, {
       status: "crashed",
       error: job.error ?? "进程已退出但未写终态(疑似硬崩)"

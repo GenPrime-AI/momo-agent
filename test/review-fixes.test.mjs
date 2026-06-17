@@ -462,6 +462,54 @@ test("resume re-validation: continue fails if the base never reached 'done'", as
   }
 });
 
+test("queued job with pid:0 (runner not yet backfilled) is NOT falsely crashed by status", () => {
+  const h = setup();
+  try {
+    const id = "glm-5.2-q0";
+    const now = new Date().toISOString();
+    const rec = {
+      id, status: "queued", pid: 0, pid_token: null, client_pid: null, client_pid_token: null,
+      seq: 1, model: "glm-5.2", client: "claude", effort: "high", thread_key: "tk",
+      session_id: "s", claude_session: null, cwd: h.home,
+      started_at: now, last_heartbeat: now, timeout_ms: 600000, exit_code: null, error: null,
+    };
+    fs.mkdirSync(jobsDir(h.momoHome), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir(h.momoHome), `${id}.json`), JSON.stringify(rec));
+
+    const r = runMomo(["status", id], { home: h.home });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readJobFile(h.momoHome, id).status, "queued", "pid:0 queued job must stay queued, not crashed");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("PID reuse: a running job whose pid_token no longer matches is crashed, NOT killed", async () => {
+  const h = setup();
+  const live = sleeper(30); // an unrelated, live process holding a (possibly reused) pid
+  try {
+    const id = "glm-5.2-reuse";
+    const now = new Date().toISOString();
+    const rec = {
+      id, status: "running", pid: live, pid_token: "STALE-TOKEN-does-not-match", client_pid: null, client_pid_token: null,
+      seq: 1, model: "glm-5.2", client: "claude", effort: "high", thread_key: "tk",
+      session_id: "s", claude_session: null, cwd: h.home,
+      started_at: now, last_heartbeat: now, timeout_ms: 600000, exit_code: null, error: null,
+    };
+    fs.mkdirSync(jobsDir(h.momoHome), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir(h.momoHome), `${id}.json`), JSON.stringify(rec));
+
+    const r = runMomo(["status", id], { home: h.home });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readJobFile(h.momoHome, id).status, "crashed", "token mismatch => treat as dead/crashed");
+    await wait(150);
+    assert.equal(alive(live), true, "the unrelated (reused-pid) process must NOT be killed");
+  } finally {
+    try { process.kill(live, "SIGKILL"); } catch {}
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());

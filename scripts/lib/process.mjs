@@ -18,6 +18,37 @@ export function isAlive(pid) {
   }
 }
 
+// 进程身份 token:用 `ps -o lstart=`(进程启动时刻)区分"同一 PID 但已被 OS 回收复用"的情况。
+// 记录 pid 时一并存其 token;杀/判活前比对 token,避免裸 PID 复用导致误杀/误判。
+export function procToken(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return null;
+  if (process.platform === "win32") return null; // win 无此机制,退回裸 PID
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    stdio: "pipe",
+    windowsHide: true
+  });
+  if (r.error || r.status !== 0) return null;
+  const s = (r.stdout || "").trim();
+  return s || null;
+}
+
+// 该 pid 是否"仍存活且仍是当初记录的那个进程"。token 为空(旧记录/未及记录)时退回裸 isAlive。
+export function aliveAndOurs(pid, token) {
+  if (!isAlive(pid)) return false;
+  if (!token) return true;
+  const cur = procToken(pid);
+  return cur != null && cur === token;
+}
+
+// 仅当 pid 仍是当初那个进程时才杀其进程树(PID 被复用则跳过,绝不误杀无关进程)。
+export function terminateTreeIfOurs(pid, token, options = {}) {
+  if (!aliveAndOurs(pid, token)) {
+    return { attempted: false, delivered: false, method: "skipped" };
+  }
+  return terminateProcessTree(pid, options);
+}
+
 // 二进制是否可用(self-check)。用 spawnSync 跑探测命令。
 export function binaryAvailable(command, probeArgs = ["--help"], options = {}) {
   const result = spawnSync(command, probeArgs, {
