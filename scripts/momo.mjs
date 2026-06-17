@@ -19,6 +19,7 @@ import {
   generateJobId,
   heartbeat,
   HEARTBEAT_INTERVAL_MS,
+  isActive,
   isTerminal,
   jobLogFile,
   listJobs,
@@ -207,6 +208,10 @@ function cmdContinue(argv) {
     fail(`找不到 job "${reference}"。用 /momo:status 查看已知 job。`);
   }
 
+  // 先做存活判定 —— base 可能"磁盘上写着 running 但 runner 已硬崩",assessJob 会把它转成
+  // crashed 并落盘。否则我们会基于陈旧状态接受 continue,排一个注定 resume 失败的 follow-up。
+  base = assessJob(base);
+
   // resume 能力由 client 适配器决定(SPEC §5.2:codex 可能不支持)。
   const client = getClient(base.client);
   if (!client) {
@@ -215,15 +220,19 @@ function cmdContinue(argv) {
   if (client.supportsResume === false) {
     fail(`client "${base.client}" 暂不支持 continue/resume`);
   }
-  // 会话 id 是否"完成前就稳定":
-  //  - claude:work 时用 --session-id 钉死,稳定 → continue 可排队在仍运行的 base 后面
-  //    (靠同 thread_key 锁串行),无需等 base 完成。
-  //  - codex:真实 resume id 要解析完成后的输出才知,不稳定 → 只能续接已完成(done)的 base,
-  //    否则 session_id 仍是占位 UUID,会接到错误/不存在的线程。
-  if (client.sessionIdStable !== true && base.status !== "done") {
+  // 何时可续接(会话 id 是否"完成前就稳定"):
+  //  - 任何 client:base 已 done → 可续(会话已建立)。
+  //  - claude(sessionIdStable):work 时 --session-id 钉死,base 处于活动态(queued/running)
+  //    也可续 —— 靠同 thread_key 锁排队在其后。但若 base 已是非 done 终态(crashed/failed/
+  //    killed/timeout),会话很可能没真正建立,拒绝并讲清原因。
+  //  - codex(不稳定):真实 resume id 要解析完成输出才知 → 只能续 done。
+  const stable = client.sessionIdStable === true;
+  const okToContinue = base.status === "done" || (stable && isActive(base.status));
+  if (!okToContinue) {
     fail(
-      `job ${base.id} 当前是 "${base.status}";client "${base.client}" 的会话 id 要等任务完成才确定,` +
-        `请用 /momo:status 等它完成后再 continue。`
+      stable
+        ? `job ${base.id} 当前是 "${base.status}",无法续接(请基于 运行中 或 已完成 的 job)。`
+        : `job ${base.id} 当前是 "${base.status}";client "${base.client}" 的会话 id 要等任务完成才确定,请等它 done 后再 continue。`
     );
   }
   if (!base.session_id) {
@@ -356,28 +365,30 @@ async function runUnderThreadLock(id, job, exec, client) {
       childEnv[k] = v;
     }
   }
+  // 先装 SIGTERM 处理器(引用可变 child),**再** spawn —— 这样从 client 一诞生起,
+  // 若 runner 被 cancel/cleanup 杀(SIGTERM 打到 runner 组),处理器就会杀掉 client 子树,
+  // 不留孤儿;即便 client_pid 还没来得及落盘,也没有"client 已起但无人能杀"的窗口。
+  let child = null;
+  const onTerm = () => {
+    if (child) terminateProcessTree(child.pid, { signal: "SIGKILL" });
+    process.exit(0);
+  };
+  process.on("SIGTERM", onTerm);
+
   // client detached:自成进程组,terminateProcessTree(child.pid) 能命中其整棵子树。
-  const child = spawn(invocation.command, invocation.argv, {
+  child = spawn(invocation.command, invocation.argv, {
     cwd: job.cwd,
     env: childEnv,
     detached: true,
     stdio: ["ignore", "pipe", "pipe"]
   });
 
-  // 持久化 client 进程组 leader pid。cancel/cleanup 据此**直接**杀 client 子树,
-  // 不再单点依赖 runner 的 SIGTERM relay(runner 若已崩,client 不致成孤儿)。
+  // 持久化 client 进程组 leader pid,让 cancel/cleanup 能**直接**杀 client 子树(加速路径;
+  // 即便此前落盘,孤儿也已由上面的 SIGTERM 处理器兜底)。
   {
     const cur = readJob(id) ?? job;
     writeJob({ ...cur, client_pid: child.pid });
   }
-
-  // cancel 仍会杀 __run-job(job.pid)。装 SIGTERM 处理器:转手杀 client 子树后退出
-  // (作为 client 子树被独立杀掉之外的双保险)。
-  const onTerm = () => {
-    terminateProcessTree(child.pid, { signal: "SIGKILL" });
-    process.exit(0);
-  };
-  process.on("SIGTERM", onTerm);
 
   let stdout = "";
   let stderr = "";

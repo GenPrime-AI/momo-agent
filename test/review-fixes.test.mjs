@@ -287,6 +287,38 @@ test("SessionEnd of the last session also reaps unowned running jobs (no leak)",
   }
 });
 
+test("continue assesses base liveness: a hard-crashed base is rejected, not queued", async () => {
+  const h = setup();
+  const dead = sleeper(30);
+  try {
+    // kill the would-be runner so its pid is dead
+    try { process.kill(dead, "SIGKILL"); } catch {}
+    await wait(150);
+
+    // craft a job that still says "running" on disk but whose runner pid is dead
+    const id = "glm-5.2-deadbase";
+    const rec = {
+      id, status: "running", pid: dead, client_pid: null,
+      model: "glm-5.2", client: "claude", effort: "high",
+      thread_key: "tk", session_id: "11111111-1111-1111-1111-111111111111",
+      claude_session: null, cwd: h.home,
+      started_at: new Date().toISOString(), last_heartbeat: new Date().toISOString(),
+      timeout_ms: 600000, exit_code: null, error: null,
+    };
+    fs.mkdirSync(jobsDir(h.momoHome), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir(h.momoHome), `${id}.json`), JSON.stringify(rec));
+
+    const cont = runMomo(["continue", id, "--", "more"], { home: h.home });
+    assert.notEqual(cont.status, 0, "continue must reject a crashed base, not queue a doomed resume");
+    assert.match(cont.stderr, /crashed|无法续接/);
+    // and the assessment got persisted
+    const after = readJobFile(h.momoHome, id);
+    assert.equal(after.status, "crashed");
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("P2: provider api key is never serialized into the job file", async () => {
   const h = makeHome();
   try {
