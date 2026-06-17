@@ -92,3 +92,31 @@ test("validateConfig: unknown auth value is rejected", () => {
   const errs = validateConfig(cfg);
   assert.ok(errs.some((e) => /unknown auth/.test(e)), errs.join(" | "));
 });
+
+import {
+  makeHome,
+  writeConfigFile,
+  runMomo,
+  parseJobId,
+  waitForJob,
+} from "./helpers.mjs";
+
+test("work: keyless codex-login job dispatches and completes via mock codex", async () => {
+  const h = makeHome();
+  try {
+    writeConfigFile(h.momoHome, loginConfig());
+    const r = runMomo(
+      ["work", "--model", "gpt-5-codex-login", "--", "say hi"],
+      { home: h.home, env: { MOCK_RESULT: "login-ok" } }
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const id = parseJobId(r.stdout);
+    assert.ok(id, `no job id in stdout: ${r.stdout}`);
+    const job = await waitForJob(h.momoHome, id, (j) =>
+      ["done", "failed", "crashed", "timeout"].includes(j.status)
+    );
+    assert.equal(job.status, "done", JSON.stringify(job));
+  } finally {
+    h.cleanup();
+  }
+});
