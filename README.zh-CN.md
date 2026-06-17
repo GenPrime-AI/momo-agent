@@ -77,13 +77,19 @@ claude plugin install momo@momo-agent
 |---|---|
 | `/momo:config` | 配置 provider / model / key / base-url / effort(自然语言)。 |
 | `/momo:list` | 列出已配模型、可用 client(默认带 `*`)和 effort 选项。 |
-| `/momo:work --model <m> [--client <c>] [--effort <e>] -- <任务>` | 委派任务;立刻返回 `job-id`(绝不阻塞)。 |
+| `/momo:run  --model <m> [--client <c>] [--effort <e>] -- <任务>` | 把任务作为 **Claude 后台 shell 任务**委派:不阻塞对话,模型跑完时 Claude 用通知把结果带回来。无需轮询。 |
+| `/momo:work --model <m> [--client <c>] [--effort <e>] -- <任务>` | 把任务作为 **momo 自管的 detach job** 委派;立刻返回 `job-id`(绝不阻塞)。用 status/result 取回;支持 cancel/continue,可跨 session 存活。 |
 | `/momo:status [job-id]` | 查 job 状态(running / done / failed / timeout / killed / crashed;会标"疑似卡死")。 |
 | `/momo:result <job-id>` | 取回已完成 job 的最终结果。 |
 | `/momo:continue <job-id> -- <追加指令>` | 接着该 job 的线程续接(在其之后、按顺序跑)。 |
 | `/momo:cancel <job-id>` | 终止一个运行中的 job。 |
 
 不指定 `--client` / `--effort` 时,取该 model 配置里的第一个;`--model` 必填。
+
+### 两种"后台"
+
+- **`/momo:run` —— 骑 Claude 自己的后台。** 它同步跑 client、打印结果;命令以 `run_in_background: true` 启动,所以对话不阻塞,模型跑完时 Claude 用通知把结果送回主 agent。适合"派一件、跑完通知我"。无 job 文件、无轮询。
+- **`/momo:work` —— momo 自管的 detach job。** 活儿被 detach 进 momo 自己的后台进程并作为 job 追踪。适合一次性扇出很多个、需要 `cancel` / `continue`、或要跨 session 存活。用 `/momo:status`、`/momo:result` 取结果。
 
 ### 示例
 

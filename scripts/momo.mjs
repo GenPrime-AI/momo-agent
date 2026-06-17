@@ -224,6 +224,114 @@ function cmdWork(argv) {
   process.stdout.write(`${renderWorkAccepted(readJob(id))}\n`);
 }
 
+// ——— run:前台/同步模式 —— 不 detach、不写 job,内联跑 client、阻塞到出结果,把结果打到 stdout。
+// 主 agent 用 Claude 的 run_in_background 包它即可"非阻塞 + 完成时通知",无需 job 文件/轮询。
+async function cmdRun(argv) {
+  let parsed;
+  try {
+    parsed = parseFormC(argv);
+    assertKnownFlags(parsed.flags, KNOWN_WORK_FLAGS);
+  } catch (error) {
+    fail(error.message);
+  }
+  const { flags } = parsed;
+  const task = flags.stdin ? readStdinTask() : parsed.task;
+
+  let ctx;
+  try {
+    ctx = resolveContext({ model: flags.model, client: flags.client, effort: flags.effort });
+  } catch (error) {
+    fail(error.message);
+  }
+  if (!task || !task.trim()) {
+    fail("任务正文为空(请在 -- 之后或用 --stdin 给出要委派的活)");
+  }
+
+  const client = ctx.adapter;
+  let invocation;
+  try {
+    invocation = client.buildInvocation({
+      taskPrompt: task,
+      modelId: ctx.modelId,
+      baseUrl: ctx.baseUrl,
+      apiKey: ctx.apiKey,
+      effort: ctx.effort,
+      wireApi: ctx.wireApi ?? null,
+      sessionId: randomUUID(),
+      resume: false
+    });
+  } catch (error) {
+    fail(`构造调用失败: ${error.message}`);
+  }
+
+  for (const f of invocation.files ?? []) {
+    fs.mkdirSync(path.dirname(f.path), { recursive: true });
+    fs.writeFileSync(f.path, f.content, "utf8");
+  }
+
+  const childEnv = { ...process.env };
+  for (const [k, v] of Object.entries(invocation.env ?? {})) {
+    if (v === null) delete childEnv[k];
+    else childEnv[k] = v;
+  }
+
+  // client 自成进程组,便于超时/被杀时整树清理。我们(momo)保持前台 await,不 detach。
+  const child = spawn(invocation.command, invocation.argv, {
+    cwd: process.cwd(),
+    env: childEnv,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  // 被 Claude(后台任务)或用户终止 momo 时,连带杀掉 client 子树,不留孤儿。
+  const onTerm = () => {
+    terminateProcessTree(child.pid, { signal: "SIGKILL" });
+    process.exit(130);
+  };
+  process.on("SIGTERM", onTerm);
+  process.on("SIGINT", onTerm);
+
+  let stdout = "";
+  let stderr = "";
+  const MAX_STDOUT = 4 * 1024 * 1024;
+  const MAX_STDERR = 64 * 1024;
+  const tail = (buf, chunk, max) => {
+    const next = buf + chunk;
+    return next.length > max ? next.slice(next.length - max) : next;
+  };
+  child.stdout.on("data", (d) => { stdout = tail(stdout, d.toString(), MAX_STDOUT); });
+  child.stderr.on("data", (d) => { stderr = tail(stderr, d.toString(), MAX_STDERR); });
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    terminateProcessTree(child.pid, { signal: "SIGKILL" });
+  }, ctx.timeoutMs);
+
+  const exit = await new Promise((resolve) => {
+    child.on("close", (code) => resolve({ code }));
+    child.on("error", (err) => resolve({ spawnError: err }));
+  });
+  clearTimeout(timer);
+
+  if (timedOut) {
+    fail(`wall-clock 超时(>${Math.round(ctx.timeoutMs / 1000)}s),已终止`);
+  }
+  if (exit.spawnError) {
+    fail(mapClientError(exit.spawnError.message, stderr));
+  }
+  if (exit.code === 0) {
+    let text = "";
+    try {
+      text = client.parseResult(stdout) ?? "";
+    } catch {
+      text = stdout;
+    }
+    process.stdout.write(text.endsWith("\n") ? text : text + "\n");
+    process.exit(0);
+  }
+  fail(mapClientError(`client 退出码 ${exit.code}`, stderr));
+}
+
 // ——— continue:复用 (thread_key, session_id) 起新后台 job,同线程串行 ———
 function cmdContinue(argv) {
   // 形态:continue <job-id> -- <追加指令>  或  continue <job-id> --stdin (正文走 stdin)
@@ -736,6 +844,8 @@ async function main() {
   switch (sub) {
     case "work":
       return cmdWork(rest);
+    case "run":
+      return cmdRun(rest);
     case "continue":
       return cmdContinue(rest);
     case "status":
@@ -754,7 +864,7 @@ async function main() {
       return cmdRunJob(rest);
     default:
       fail(
-        `未知子命令 "${sub ?? ""}"。可用:work continue status result cancel list config-set cleanup`,
+        `未知子命令 "${sub ?? ""}"。可用:work run continue status result cancel list config-set cleanup`,
         2
       );
   }

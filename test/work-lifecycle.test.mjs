@@ -13,6 +13,7 @@ import {
   parseJobId,
   readJobFile,
   waitForJob,
+  listJobIds,
   sleep,
 } from "./helpers.mjs";
 
@@ -45,6 +46,36 @@ test("work returns a job-id immediately and does not block; runs to done", async
     const res = runMomo(["result", id], { home: h.home });
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout, /claude mock done/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("run (foreground): prints the model result inline, exits 0, creates NO job file", () => {
+  const h = setup();
+  try {
+    const r = runMomo(["run", "--model", "glm-5.2", "--", "hello"], {
+      home: h.home,
+      env: { MOCK_RESULT: "INLINE-RESULT-OK" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /INLINE-RESULT-OK/);
+    assert.equal(listJobIds(h.momoHome).length, 0, "foreground run must not create a job file");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("run (foreground): non-zero client exit -> non-zero status + friendly error", () => {
+  const h = setup();
+  try {
+    const r = runMomo(["run", "--model", "glm-5.2", "--", "x"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "authfail" },
+    });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /鉴权/);
+    assert.equal(listJobIds(h.momoHome).length, 0);
   } finally {
     h.cleanup();
   }

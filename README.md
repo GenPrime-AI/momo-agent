@@ -77,13 +77,19 @@ It writes `~/.momo/config.json` (plaintext keys — kept on your machine, never 
 |---|---|
 | `/momo:config` | Configure providers / models / keys / base-urls / effort (natural language). |
 | `/momo:list` | Show configured models, their clients (default `*`) and effort options. |
-| `/momo:work --model <m> [--client <c>] [--effort <e>] -- <task>` | Delegate a task; returns a `job-id` immediately (never blocks). |
+| `/momo:run  --model <m> [--client <c>] [--effort <e>] -- <task>` | Delegate a task as a **Claude background shell task**: non-blocking, and Claude notifies you with the model's result when it finishes. No polling. |
+| `/momo:work --model <m> [--client <c>] [--effort <e>] -- <task>` | Delegate a task as a **momo-managed detached job**; returns a `job-id` immediately (never blocks). Retrieve with status/result; supports cancel/continue and survives across sessions. |
 | `/momo:status [job-id]` | Show job status (running / done / failed / timeout / killed / crashed; flags suspected-stuck). |
 | `/momo:result <job-id>` | Fetch the final result of a finished job. |
 | `/momo:continue <job-id> -- <follow-up>` | Resume the job's thread with a follow-up (runs after it, in order). |
 | `/momo:cancel <job-id>` | Kill a running job. |
 
 Unspecified `--client` / `--effort` fall back to the model's first configured option. `--model` is required.
+
+### Two ways to go background
+
+- **`/momo:run` — ride Claude's own background.** It runs the client synchronously and prints the result; the command is launched with `run_in_background: true`, so the conversation isn't blocked and Claude re-invokes the agent with the result when the model finishes. Best for "delegate one thing and get notified." No job files, no polling.
+- **`/momo:work` — momo-managed detached jobs.** The work is detached into momo's own background process and tracked as a job. Best when you fan out many at once, need `cancel` / `continue`, or want jobs to survive across sessions. You retrieve results with `/momo:status` and `/momo:result`.
 
 ### Example
 
