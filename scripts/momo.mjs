@@ -468,7 +468,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
   try {
     pid = spawnDetached(process.execPath, [SELF, "__run-job", id], {
       cwd,
-      env: { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey },
+      env: { ...process.env, ...(ctx.apiKey ? { MOMO_JOB_API_KEY: ctx.apiKey } : {}) },
       logFile: jobLogFile(id)
     });
   } catch (error) {

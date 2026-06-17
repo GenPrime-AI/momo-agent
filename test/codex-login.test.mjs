@@ -38,3 +38,37 @@ test("codex-login buildInvocation: login mode, no config-isolation, no key env",
   assert.ok(inv.argv.some((a) => String(a).includes('model_reasoning_effort="medium"')));
   assert.equal(inv.argv[inv.argv.length - 1], "say hi");
 });
+
+import { resolve } from "../scripts/lib/resolve.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const MOCK_BIN = path.join(HERE, "mock-bin");
+const ENV = { ...process.env, PATH: `${MOCK_BIN}${path.delimiter}${process.env.PATH}` };
+
+// A config that drives codex via the user's login (no provider key/base_url).
+function loginConfig() {
+  return {
+    version: 1,
+    providers: { "codex-local": { protocols: ["openai"], auth: "login" } },
+    models: {
+      "gpt-5-codex-login": {
+        provider: "codex-local",
+        model_id: "gpt-5-codex",
+        clients: ["codex-login"],
+      },
+    },
+  };
+}
+
+test("resolve: codex-login needs no key/base_url and finds the codex binary", () => {
+  const ctx = resolve(loginConfig(), {
+    model: "gpt-5-codex-login",
+    env: ENV,
+    taskPrompt: "hi",
+  });
+  assert.equal(ctx.client, "codex-login");
+  assert.equal(ctx.apiKey, null);
+  assert.equal(ctx.baseUrl, null);
+  assert.equal(ctx.modelId, "gpt-5-codex");
+  assert.ok(ctx.binaryPath.endsWith(`${path.sep}codex`));
+});

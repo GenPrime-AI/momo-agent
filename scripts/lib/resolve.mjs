@@ -101,19 +101,25 @@ export function resolveForContinue(config, base, opts = {}) {
   if (!Array.isArray(provider.protocols) || !provider.protocols.includes(protocol)) {
     throw new ResolveError("protocol-incompatible", `provider "${base.provider}" no longer supports protocol "${protocol}"; cannot continue.`);
   }
-  const binaryPath = resolveBinary(base.client, env);
+  const binaryPath = resolveBinary(adapter.binary || base.client, env);
   if (!binaryPath) {
     throw new ResolveError("client-not-installed", `client "${base.client}" is not installed; cannot continue.`);
   }
   if (base.effort && !adapter.allowedEffort.has(base.effort)) {
     throw new ResolveError("effort-invalid", `effort "${base.effort}" is invalid for client "${base.client}".`);
   }
-  const baseUrl = provider.base_url && provider.base_url[protocol];
-  if (!baseUrl) {
-    throw new ResolveError("base-url-missing", `provider "${base.provider}" is missing a base_url for the ${protocol} protocol.`);
-  }
-  if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
-    throw new ResolveError("api-key-missing", `provider "${base.provider}" is missing api_key.`);
+  // Client-auth adapters (e.g. codex-login) use the client's own login → no provider key/base_url.
+  let baseUrl = null;
+  let apiKey = null;
+  if (!adapter.usesClientAuth) {
+    baseUrl = provider.base_url && provider.base_url[protocol];
+    if (!baseUrl) {
+      throw new ResolveError("base-url-missing", `provider "${base.provider}" is missing a base_url for the ${protocol} protocol.`);
+    }
+    if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
+      throw new ResolveError("api-key-missing", `provider "${base.provider}" is missing api_key.`);
+    }
+    apiKey = provider.api_key;
   }
 
   return {
@@ -125,7 +131,7 @@ export function resolveForContinue(config, base, opts = {}) {
     adapter,
     effort: base.effort,
     baseUrl,
-    apiKey: provider.api_key,
+    apiKey,
     binaryPath,
     cwd,
     threadKey: base.thread_key ?? threadKey(cwd, base.model, base.client),
@@ -209,7 +215,7 @@ export function resolve(config, opts = {}) {
   const protocol = adapter.protocol;
 
   // §8.4 — client binary installed?
-  const binaryPath = resolveBinary(client, env);
+  const binaryPath = resolveBinary(adapter.binary || client, env);
   if (!binaryPath) {
     const avail = compatibleClients(config, model).filter((c) => resolveBinary(c, env));
     throw new ResolveError(
@@ -249,19 +255,25 @@ export function resolve(config, opts = {}) {
     effort = null; // model has no effort
   }
 
-  // §8.6 — provider api_key / base_url present
-  const baseUrl = provider.base_url && provider.base_url[protocol];
-  if (!baseUrl) {
-    throw new ResolveError(
-      "base-url-missing",
-      `provider "${providerName}" is missing a base_url for the ${protocol} protocol. Run /momo:config to fill it in.`
-    );
-  }
-  if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
-    throw new ResolveError(
-      "api-key-missing",
-      `provider "${providerName}" is missing api_key. Run /momo:config to fill it in.`
-    );
+  // §8.6 — credentials. A client-auth adapter (e.g. codex-login) uses the client's own
+  // login (e.g. `codex login`), so it needs no provider base_url/api_key.
+  let baseUrl = null;
+  let apiKey = null;
+  if (!adapter.usesClientAuth) {
+    baseUrl = provider.base_url && provider.base_url[protocol];
+    if (!baseUrl) {
+      throw new ResolveError(
+        "base-url-missing",
+        `provider "${providerName}" is missing a base_url for the ${protocol} protocol. Run /momo:config to fill it in.`
+      );
+    }
+    if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
+      throw new ResolveError(
+        "api-key-missing",
+        `provider "${providerName}" is missing api_key. Run /momo:config to fill it in.`
+      );
+    }
+    apiKey = provider.api_key;
   }
 
   // §8.7 — task prompt non-empty (only checked when provided)
@@ -292,7 +304,7 @@ export function resolve(config, opts = {}) {
     adapter,
     effort,
     baseUrl,
-    apiKey: provider.api_key,
+    apiKey,
     binaryPath,
     cwd,
     threadKey: threadKey(cwd, model, client),
