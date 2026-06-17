@@ -93,6 +93,60 @@ test("validateConfig: unknown auth value is rejected", () => {
   assert.ok(errs.some((e) => /unknown auth/.test(e)), errs.join(" | "));
 });
 
+// ── adversarial coverage ──
+
+import { resolveForContinue, ResolveError } from "../scripts/lib/resolve.mjs";
+
+test("adversarial: resolveForContinue on a codex-login job needs no key/base_url", () => {
+  const base = {
+    provider: "codex-local",
+    client: "codex-login",
+    protocol: "openai",
+    model: "gpt-5-codex-login",
+    model_id: "gpt-5-codex",
+    cwd: process.cwd(),
+  };
+  const ctx = resolveForContinue(loginConfig(), base, { env: ENV });
+  assert.equal(ctx.client, "codex-login");
+  assert.equal(ctx.apiKey, null);
+  assert.equal(ctx.baseUrl, null);
+  assert.ok(ctx.binaryPath.endsWith(`${path.sep}codex`));
+});
+
+test("adversarial: codex-login resume invocation puts options before SESSION_ID", () => {
+  const inv = codexLogin.buildInvocation({
+    taskPrompt: "more",
+    modelId: "gpt-5-codex",
+    effort: null,
+    sessionId: "sess-123",
+    resume: true,
+  });
+  assert.deepEqual(inv.argv.slice(0, 2), ["exec", "resume"]);
+  const mIdx = inv.argv.indexOf("-m");
+  const sIdx = inv.argv.indexOf("sess-123");
+  assert.ok(mIdx > 1 && sIdx > mIdx, `argv: ${inv.argv.join(" ")}`);
+  assert.equal(inv.argv[inv.argv.length - 1], "more");
+  assert.equal(inv.argv.includes("--ignore-user-config"), false);
+});
+
+test("adversarial: the key exemption is adapter-scoped — a keyed codex client on a login provider still fails resolve", () => {
+  // A login provider (no key) but the model points the KEYED codex client at it.
+  const cfg = {
+    version: 1,
+    providers: { "codex-local": { protocols: ["openai"], auth: "login" } },
+    models: {
+      bad: { provider: "codex-local", model_id: "gpt-5-codex", clients: ["codex"] },
+    },
+  };
+  // config validation accepts it (provider is exempt), but resolve must demand credentials
+  // because the `codex` adapter is NOT usesClientAuth.
+  assert.deepEqual(validateConfig(cfg), []);
+  assert.throws(
+    () => resolve(cfg, { model: "bad", env: ENV, taskPrompt: "x" }),
+    (err) => err instanceof ResolveError && /base-url-missing|api-key-missing/.test(err.code)
+  );
+});
+
 import {
   makeHome,
   writeConfigFile,
