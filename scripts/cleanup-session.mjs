@@ -5,9 +5,10 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import {
+  addActiveSession,
   finalizeJob,
   listRunningBySession,
-  persistSessionId
+  removeActiveSession
 } from "./lib/jobs.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
 
@@ -61,16 +62,16 @@ async function main() {
   const sessionId = fromStdin ?? process.env[SESSION_ID_ENV] ?? null;
 
   if (mode === "SessionStart") {
-    // 持久化当前主 session id,供后续 work 在 env 缺失时回退记录 claude_session,
-    // 保证 SessionEnd 能匹配并清理本 session 的 job(SPEC §2.2)。
-    if (sessionId) persistSessionId(sessionId);
-    process.stdout.write(`momo: session ${sessionId ?? "?"} 已记录\n`);
+    // 把当前主 session id 登记到活跃集合。work 在只有一个活跃 session 时据此归属 job
+    // (单 session 安全),保证 SessionEnd 能匹配清理(SPEC §2.2)。
+    if (sessionId) addActiveSession(sessionId);
+    process.stdout.write(`momo: session ${sessionId ?? "?"} 已登记\n`);
     return;
   }
 
-  // SessionEnd:只用 stdin/env 给出的 session id 清理。
-  // 不回退到 current-session 这个全局 singleton —— 多个 Claude session 并发时,
-  // 它只记最近启动的那个,用它清理可能误杀另一个 session 的 job。拿不到 id 就 no-op。
+  // SessionEnd:从活跃集合移除本 session,并只用 stdin/env 给出的 session id 清理。
+  // 不猜全局 singleton —— 多 session 并发时用它清理会误杀别的 session 的 job。无 id → no-op。
+  if (sessionId) removeActiveSession(sessionId);
   if (!sessionId) {
     process.stdout.write("momo cleanup: 无 session id,跳过(避免误杀其他 session 的 job)\n");
     return;

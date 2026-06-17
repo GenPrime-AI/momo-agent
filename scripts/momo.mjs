@@ -23,12 +23,12 @@ import {
   jobLogFile,
   listJobs,
   readJob,
-  readPersistedSessionId,
   resolveJobRef,
+  soleActiveSession,
   threadKey,
   writeJob
 } from "./lib/jobs.mjs";
-import { acquireLock, CONFIG_LOCK, threadLockName, withLock } from "./lib/lock.mjs";
+import { acquireLock, threadLockName } from "./lib/lock.mjs";
 import { binaryAvailable, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
   renderCancel,
@@ -40,7 +40,7 @@ import {
 } from "./lib/render.mjs";
 
 // ——— 协议层(adapter 接口约定见 SPEC §5;路径见 §9)———
-import { loadConfig, saveConfig } from "./lib/config.mjs";
+import { loadConfig, patchConfig } from "./lib/config.mjs";
 import {
   listModels as listModelNames,
   getModel,
@@ -254,7 +254,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     effort: ctx.effort,
     thread_key,
     session_id,
-    claude_session: process.env[SESSION_ID_ENV] ?? readPersistedSessionId() ?? null,
+    claude_session: process.env[SESSION_ID_ENV] ?? soleActiveSession() ?? null,
     cwd,
     timeout_ms: ctx.timeoutMs
   });
@@ -576,8 +576,9 @@ function cmdConfigSet(argv) {
     fail(`--json 不是合法 JSON: ${error.message}`);
   }
   try {
-    // saveConfig(协议层):校验(§6.1)+ 原子写 + 写锁;坏 JSON 不覆盖在 config.mjs 内保证。
-    withLock(CONFIG_LOCK, () => saveConfig(payload));
+    // patchConfig:把**部分** patch 深合并进现有 config(不删除未触及的 provider/model),
+    // 再校验(§6.1)+ 原子写 + 写锁;坏 JSON 不覆盖在 config.mjs 内保证。
+    patchConfig(payload);
   } catch (error) {
     fail(error.message);
   }

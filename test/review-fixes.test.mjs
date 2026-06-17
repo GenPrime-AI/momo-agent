@@ -100,17 +100,61 @@ test("P2: config-set refuses to overwrite a hand-broken config.json", () => {
   }
 });
 
-test("P2: SessionStart hook persists the main session id to ~/.momo/current-session", () => {
+test("P2: SessionStart registers an active session; sole active session tags new work", async () => {
   const h = setup();
   try {
     const r = runCleanup(["SessionStart"], {
       home: h.home,
-      input: JSON.stringify({ session_id: "sess-PERSIST-123" }),
+      input: JSON.stringify({ session_id: "sess-ONE" }),
     });
     assert.equal(r.status, 0, r.stderr);
-    const p = path.join(h.momoHome, "current-session");
-    assert.ok(fs.existsSync(p), "current-session file must be written");
-    assert.equal(fs.readFileSync(p, "utf8").trim(), "sess-PERSIST-123");
+    const af = path.join(h.momoHome, "active-sessions.json");
+    assert.deepEqual(JSON.parse(fs.readFileSync(af, "utf8")), ["sess-ONE"]);
+
+    // work has no CLAUDE_SESSION_ID env -> falls back to the sole active session.
+    const w = runMomo(["work", "--model", "glm-5.2", "--", "x"], {
+      home: h.home,
+      env: { MOCK_RESULT: "ok" },
+    });
+    const id = w.stdout.match(/job\s+([^\s(]+)/)[1];
+    const job = await waitForJob(h.momoHome, id, (j) => j.status === "done");
+    assert.equal(job.claude_session, "sess-ONE", "sole active session must tag the job");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P2: with two active sessions, new work is tagged null (no cross-session attribution)", async () => {
+  const h = setup();
+  try {
+    runCleanup(["SessionStart"], { home: h.home, input: JSON.stringify({ session_id: "sess-A" }) });
+    runCleanup(["SessionStart"], { home: h.home, input: JSON.stringify({ session_id: "sess-B" }) });
+
+    const w = runMomo(["work", "--model", "glm-5.2", "--", "x"], {
+      home: h.home,
+      env: { MOCK_RESULT: "ok" },
+    });
+    const id = w.stdout.match(/job\s+([^\s(]+)/)[1];
+    const job = await waitForJob(h.momoHome, id, (j) => j.status === "done");
+    assert.equal(job.claude_session, null, "ambiguous (2 active) must not guess a session");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P2: config-set merges a partial patch (does not delete untouched providers/models)", () => {
+  const h = setup(); // starts with full sampleConfig on disk
+  try {
+    // partial patch: only change zhipu's api_key
+    const patch = JSON.stringify({ providers: { zhipu: { api_key: "rotated-key" } } });
+    const r = runMomo(["config-set", "--json", patch], { home: h.home });
+    assert.equal(r.status, 0, r.stderr);
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(h.momoHome, "config.json"), "utf8"));
+    assert.equal(cfg.providers.zhipu.api_key, "rotated-key", "patched field applied");
+    assert.ok(cfg.providers.zhipu.base_url.anthropic, "untouched zhipu.base_url preserved");
+    assert.ok(cfg.providers.openai, "untouched openai provider preserved");
+    assert.ok(cfg.models["glm-5.2"], "untouched models preserved");
   } finally {
     h.cleanup();
   }

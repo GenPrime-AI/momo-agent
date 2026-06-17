@@ -157,6 +157,31 @@ export function saveConfig(config) {
   return config;
 }
 
+// Deep-merge a partial patch into a base config object (plain objects merged
+// recursively; arrays and scalars replaced wholesale). Used so /momo:config can
+// send only the fields being edited without wiping untouched providers/models.
+export function deepMerge(base, patch) {
+  if (!isPlainObject(base) || !isPlainObject(patch)) return patch;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : v;
+  }
+  return out;
+}
+
+function isPlainObject(v) {
+  return v && typeof v === "object" && !Array.isArray(v);
+}
+
+// /momo:config persistence: merge a partial patch into the existing config,
+// then validate + atomically write (refuses if the on-disk file is unparseable).
+export function patchConfig(patch) {
+  if (!isPlainObject(patch)) {
+    throw new Error("config patch 必须是对象");
+  }
+  return updateConfig((current) => deepMerge(current, patch));
+}
+
 // Read-modify-write under a single lock. `mutator(cfg)` mutates and/or returns
 // the new config object. Refuses to proceed if the on-disk file is unparseable.
 export function updateConfig(mutator) {

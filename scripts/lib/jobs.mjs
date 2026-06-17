@@ -7,10 +7,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { isAlive, terminateProcessTree } from "./process.mjs";
+import { withLock } from "./lock.mjs";
 
 const MOMO_HOME = path.join(os.homedir(), ".momo");
 const JOBS_DIR = path.join(MOMO_HOME, "jobs");
-const SESSION_ID_FILE = path.join(MOMO_HOME, "current-session");
+const ACTIVE_SESSIONS_FILE = path.join(MOMO_HOME, "active-sessions.json");
 
 export const HEARTBEAT_INTERVAL_MS = 5_000; // runner 心跳间隔(≤5s)
 export const HEARTBEAT_STALE_MS = 30_000; // 超此无心跳 → 疑似卡死
@@ -31,24 +32,43 @@ export function ensureJobsDir() {
   fs.mkdirSync(JOBS_DIR, { recursive: true });
 }
 
-// ——— 主 session id 持久化 ———
-// SessionStart hook 把当前主 session id 落盘;work 记录 claude_session 时,
-// 若 env(CLAUDE_SESSION_ID)缺失则回退读此文件 —— 保证 SessionEnd 清理能匹配到。
-export function persistSessionId(sessionId) {
-  if (!sessionId) return;
-  fs.mkdirSync(MOMO_HOME, { recursive: true });
-  const tmp = `${SESSION_ID_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, String(sessionId), "utf8");
-  fs.renameSync(tmp, SESSION_ID_FILE);
+// ——— 活跃 session 注册表 ———
+// SessionStart 把 session id 加入集合,SessionEnd 移除。命令子进程拿不到自己的
+// session id(平台不注入 env),work 记录 claude_session 时只在**恰好一个活跃 session**
+// 时才归属它(单 session 安全);多个活跃 session 时不猜(返回 null),避免归错 session
+// 而被另一个 SessionEnd 误杀。RMW 在锁内做,防并发 Start/End 竞争。
+function readActiveSessions() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(ACTIVE_SESSIONS_FILE, "utf8"));
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string" && s) : [];
+  } catch {
+    return [];
+  }
 }
 
-export function readPersistedSessionId() {
-  try {
-    const v = fs.readFileSync(SESSION_ID_FILE, "utf8").trim();
-    return v || null;
-  } catch {
-    return null;
-  }
+function writeActiveSessions(list) {
+  fs.mkdirSync(MOMO_HOME, { recursive: true });
+  const tmp = `${ACTIVE_SESSIONS_FILE}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify([...new Set(list)]), "utf8");
+  fs.renameSync(tmp, ACTIVE_SESSIONS_FILE);
+}
+
+export function addActiveSession(sessionId) {
+  if (!sessionId) return;
+  withLock("active-sessions", () => writeActiveSessions([...readActiveSessions(), sessionId]));
+}
+
+export function removeActiveSession(sessionId) {
+  if (!sessionId) return;
+  withLock("active-sessions", () =>
+    writeActiveSessions(readActiveSessions().filter((s) => s !== sessionId))
+  );
+}
+
+// 恰好一个活跃 session → 返回它;否则 null(0 个或并发多个都不猜)。
+export function soleActiveSession() {
+  const active = readActiveSessions();
+  return active.length === 1 ? active[0] : null;
 }
 
 export function jobFile(id) {
@@ -64,11 +84,17 @@ export function threadKey(cwd, model, client) {
   return createHash("sha1").update(`${cwd}|${model}|${client}`).digest("hex").slice(0, 16);
 }
 
-// job-id = 人可读前缀(model)+ 短哈希,全局唯一。
+// job-id = 人可读前缀(model)+ 随机后缀,全局唯一。
+// 用 4 字节(32 位)熵,并校验同名 job 文件不存在(碰撞则重抽),避免覆盖旧 job 的
+// .json/.log 导致 status/result 错乱。
 export function generateJobId(model) {
   const prefix = String(model).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "job";
-  const suffix = randomBytes(2).toString("hex");
-  return `${prefix}-${suffix}`;
+  for (let i = 0; i < 50; i++) {
+    const id = `${prefix}-${randomBytes(4).toString("hex")}`;
+    if (!fs.existsSync(jobFile(id))) return id;
+  }
+  // 极端情况(几乎不可能):加更长后缀兜底
+  return `${prefix}-${randomBytes(8).toString("hex")}`;
 }
 
 // 原子写:tmp + rename。
