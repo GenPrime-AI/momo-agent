@@ -5,8 +5,9 @@
 
 import claude from "./claude.mjs";
 import codex from "./codex.mjs";
+import codexLogin from "./codex-login.mjs";
 
-const ADAPTERS = [claude, codex];
+const ADAPTERS = [claude, codex, codexLogin];
 
 // name -> adapter
 export const CLIENTS = Object.freeze(
