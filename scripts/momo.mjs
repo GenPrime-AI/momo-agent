@@ -239,10 +239,16 @@ function cmdContinue(argv) {
     fail(`job ${base.id} 没有可 resume 的 session_id(原 job 可能未成功建立会话)`);
   }
 
-  // 重新解析执行上下文(provider key/base_url 可能已变),沿用原 model/client/effort。
+  // 重新解析执行上下文:拿 provider 当前的 key/base_url(可能已轮换),但沿用原 job 的
+  // model/client/effort,且 allowHistorical=true —— 不因 model 配置后续改动而让老线程无法 resume。
   let ctx;
   try {
-    ctx = resolveContext({ model: base.model, client: base.client, effort: base.effort });
+    ctx = resolveContext({
+      model: base.model,
+      client: base.client,
+      effort: base.effort,
+      allowHistorical: true
+    });
   } catch (error) {
     fail(error.message);
   }

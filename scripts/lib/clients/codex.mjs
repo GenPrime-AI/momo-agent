@@ -44,8 +44,9 @@ export default {
     const iso = ["--ignore-user-config", "--ignore-rules", "--json", "--skip-git-repo-check"];
     let argv;
     if (resume) {
-      // codex exec resume <SESSION_ID> [overrides] <PROMPT>
-      argv = ["exec", "resume", sessionId, ...iso, ...providerOverrides, "-m", modelId, taskPrompt];
+      // 形态:codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+      // 选项(含 -c provider 覆盖、-m)必须在 SESSION_ID 之前,否则会被当成位置参数误解析。
+      argv = ["exec", "resume", ...iso, ...providerOverrides, "-m", modelId, sessionId, taskPrompt];
     } else {
       argv = ["exec", ...iso, "-m", modelId, ...providerOverrides, taskPrompt];
     }

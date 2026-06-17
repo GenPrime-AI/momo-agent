@@ -117,7 +117,13 @@ export function resolve(config, opts = {}) {
   let client = opts.client;
   if (client) {
     const check = clientValidForModel(config, model, client);
-    if (!check.ok) {
+    // historical(/momo:continue):允许 client 不在 model **当前** clients 列表里,只要它仍是
+    // 已知 client 且协议与 provider 兼容 —— 否则用户改了 model 配置就无法 resume 老线程。
+    const adapterC = getClient(client);
+    const protoOk =
+      adapterC && Array.isArray(provider.protocols) && provider.protocols.includes(adapterC.protocol);
+    const okHistorical = opts.allowHistorical && check.reason === "not-in-model-clients" && protoOk;
+    if (!check.ok && !okHistorical) {
       const avail = compatibleClients(config, model);
       let why;
       if (check.reason === "not-in-model-clients") {
@@ -169,7 +175,10 @@ export function resolve(config, opts = {}) {
   if (effort) {
     const inModel = Array.isArray(modelDef.effort) && modelDef.effort.includes(effort);
     const legalForClient = adapter.allowedEffort.has(effort);
-    if (!inModel || !legalForClient) {
+    // historical(/momo:continue):effort 不在 model **当前** effort 列表也行,只要该 client
+    // 适配器接受它 —— 老线程不因后续配置改动而失效。
+    const okHistorical = opts.allowHistorical && legalForClient;
+    if ((!inModel || !legalForClient) && !okHistorical) {
       const legal = (modelDef.effort || []).filter((e) => adapter.allowedEffort.has(e));
       throw new ResolveError(
         "effort-invalid",

@@ -98,8 +98,13 @@ test("codex buildInvocation: resume uses 'exec resume <session>'", () => {
     sessionId: "cs-1",
     resume: true,
   });
-  assert.deepEqual(inv.argv.slice(0, 3), ["exec", "resume", "cs-1"]);
+  // 形态:exec resume [OPTIONS] [SESSION_ID] [PROMPT] —— 选项在 session id 之前
+  assert.deepEqual(inv.argv.slice(0, 2), ["exec", "resume"]);
   assert.ok(inv.argv.includes("--json"), "resume must also emit JSONL");
+  const sid = inv.argv.indexOf("cs-1");
+  assert.ok(sid > 2, "session id must come AFTER options");
+  assert.equal(inv.argv[sid + 1], "hi", "prompt must come right after session id");
+  assert.ok(inv.argv.indexOf("--ignore-user-config") < sid, "options precede session id");
   assert.equal(inv.env.MOMO_API_KEY, "k");
 });
 

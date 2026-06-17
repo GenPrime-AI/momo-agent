@@ -319,6 +319,30 @@ test("continue assesses base liveness: a hard-crashed base is rejected, not queu
   }
 });
 
+test("continue survives later model config edits (historical client/effort still resumable)", async () => {
+  const h = setup();
+  try {
+    const base = runMomo(["work", "--model", "glm-5.2", "--", "base"], {
+      home: h.home,
+      env: { MOCK_RESULT: "ok" },
+    });
+    const baseId = base.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, baseId, (j) => j.status === "done");
+
+    // user edits the model AFTER the job: drops 'claude' from clients and changes effort list
+    const cfg = sampleConfig();
+    cfg.models["glm-5.2"].clients = ["codex"]; // claude no longer listed
+    cfg.models["glm-5.2"].effort = ["low"]; // 'high' no longer listed
+    writeConfigFile(h.momoHome, cfg);
+
+    // continue must still resume the old claude thread despite the config drift
+    const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
+    assert.equal(cont.status, 0, cont.stderr);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("P2: provider api key is never serialized into the job file", async () => {
   const h = makeHome();
   try {
