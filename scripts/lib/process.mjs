@@ -50,10 +50,13 @@ export function aliveAndOurs(pid, token) {
   return cur != null && cur === token;
 }
 
-// 杀/偷锁用(fail-CLOSED):必须**正向验证**是当初那个进程才算 ours。token 缺失或不匹配
-// 一律不认 —— 宁可不杀(避免误杀无关进程)。
+// 杀/偷锁用。POSIX 上 **fail-CLOSED**:必须正向验证(token 匹配)才算 ours,缺失/不匹配不认,
+// 宁可不杀(避免误杀)。Windows 无 token 机制 → 退回裸存活(best-effort)—— 否则 fail-closed 会让
+// 锁可被任意偷、cancel/cleanup 全 no-op。PID 复用强化是 POSIX 专属(见 SPEC 10.5)。
 export function verifiedOurs(pid, token) {
-  if (!isAlive(pid) || !token) return false;
+  if (!isAlive(pid)) return false;
+  if (process.platform === "win32") return true; // Windows best-effort:无身份原语,退回裸存活
+  if (!token) return false; // POSIX 上有 token 机制却没拿到 → fail-closed
   const cur = procToken(pid);
   return cur != null && cur === token;
 }

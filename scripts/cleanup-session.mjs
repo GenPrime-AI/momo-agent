@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import {
   activeSessions,
   addActiveSession,
+  executionStillLive,
   finalizeJob,
   listRunningBySession,
   listRunningUnowned,
@@ -19,10 +20,14 @@ const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
 const MOMO_SESSION_ID_ENV = "MOMO_SESSION_ID";
 
 function killJob(job, reason) {
-  // 先认领终态(killed,终态吸收保证必胜 runner 的 close 收尾),再验身份杀进程(PID 复用则跳过)。
+  // client 已退出(任务已结束、runner 正在收尾)→ 不抢占,让 runner 写真实结果(done/failed),
+  // 否则会丢掉"恰好在 session 关闭瞬间完成"的结果。返回 false 表示没杀。
+  if (!executionStillLive(job)) return false;
+  // 仍在跑:先认领终态(killed,终态吸收必胜 runner 的 close 收尾),再验身份杀进程(复用则跳过)。
   finalizeJob(job.id, { status: "killed", error: reason });
   terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
   terminateTreeIfOurs(job.pid, job.pid_token, { signal: "SIGTERM" });
+  return true;
 }
 
 // 杀 claude_session == sessionId 的所有 running job;opts.alsoUnowned=true 时,额外杀掉
@@ -37,8 +42,11 @@ export function cleanupSession(sessionId, opts = {}) {
   for (const job of targets) {
     if (seen.has(job.id)) continue;
     seen.add(job.id);
-    killJob(job, sessionId && job.claude_session === sessionId ? "主 session 结束,自动清理" : "无归属 job 在最后一个 session 结束时清理");
-    killed.push(job.id);
+    const reason =
+      sessionId && job.claude_session === sessionId
+        ? "主 session 结束,自动清理"
+        : "无归属 job 在最后一个 session 结束时清理";
+    if (killJob(job, reason)) killed.push(job.id);
   }
   return killed;
 }

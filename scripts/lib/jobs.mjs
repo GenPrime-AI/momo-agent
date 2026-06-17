@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { aliveAndOurs, terminateTreeIfOurs } from "./process.mjs";
+import { aliveAndOurs, terminateTreeIfOurs, verifiedOurs } from "./process.mjs";
 import { withLock } from "./lock.mjs";
 
 // 与 config.mjs 一致:MOMO_HOME 环境变量优先(测试/隔离安装/wrapper 用),否则 ~/.momo。
@@ -130,6 +130,16 @@ export function nextSeq() {
     fs.renameSync(tmp, SEQ_FILE);
     return n;
   });
+}
+
+// 执行是否"仍在进行"(可安全 cancel/cleanup 抢占)。
+//  - 已起 client 且 client 仍存活 → 仍在跑,可抢占(claim killed + 杀)。
+//  - 已起 client 但 client 已退出 → 任务其实已结束,runner 正在 close→finalize 收尾写真实结果
+//    (done/failed)→ **不可**抢占,否则 killed 会吸收掉刚完成的 done,丢结果。
+//  - 还没起 client(queued)→ 没有已完成的结果可丢,可抢占。
+export function executionStillLive(job) {
+  if (job.client_pid) return verifiedOurs(job.client_pid, job.client_pid_token);
+  return true;
 }
 
 // 同线程上是否还有"更早提交(seq 更小)且未终态"的 job —— FIFO 判断用。

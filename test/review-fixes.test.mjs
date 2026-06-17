@@ -514,6 +514,36 @@ test("PID reuse: a running job whose pid_token no longer matches is crashed, NOT
   }
 });
 
+test("cancel refuses a finishing job (client already exited) so the real result is not clobbered", async () => {
+  const h = setup();
+  const runner = sleeper(30); // runner still alive (mid finalize)
+  const deadClient = sleeper(30);
+  try {
+    process.kill(deadClient, "SIGKILL"); // client already exited
+    await wait(150);
+
+    const id = "glm-5.2-finishing";
+    const now = new Date().toISOString();
+    const rec = {
+      id, status: "running", pid: runner, pid_token: procToken(runner),
+      client_pid: deadClient, client_pid_token: "stale", seq: 1,
+      model: "glm-5.2", client: "claude", effort: "high", thread_key: "tk",
+      session_id: "s", claude_session: null, cwd: h.home,
+      started_at: now, last_heartbeat: now, timeout_ms: 600000, exit_code: null, error: null,
+    };
+    fs.mkdirSync(jobsDir(h.momoHome), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir(h.momoHome), `${id}.json`), JSON.stringify(rec));
+
+    const r = runMomo(["cancel", id], { home: h.home });
+    assert.notEqual(r.status, 0, "cancel must refuse a job whose client already exited");
+    assert.match(r.stderr, /正在收尾|无法取消/);
+    assert.equal(readJobFile(h.momoHome, id).status, "running", "must not clobber to killed");
+  } finally {
+    try { process.kill(runner, "SIGKILL"); } catch {}
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());

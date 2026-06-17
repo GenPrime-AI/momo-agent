@@ -16,6 +16,7 @@ import {
   createRunningJob,
   DEFAULT_TIMEOUT_MS,
   earlierActiveOnThread,
+  executionStillLive,
   finalizeJob,
   generateJobId,
   nextSeq,
@@ -664,8 +665,13 @@ function cmdCancel(argv) {
   if (isTerminal(job.status)) {
     fail(`job ${job.id} 已是终态 (${job.status}),无需取消`);
   }
-  // 先认领终态(killed)——终态吸收保证它必胜:即便杀 client 触发了 runner 的 close 处理、
-  // runner 想写 failed,也会被吸收成 no-op。再验身份杀进程(PID 复用则跳过,绝不误杀)。
+  // 若 client 已退出(任务已结束、runner 正在收尾写真实结果)→ 不抢占,否则 killed 会吸收掉
+  // 刚完成的 done/failed,丢结果。让 runner 正常 finalize。
+  if (!executionStillLive(job)) {
+    fail(`job ${job.id} 已执行完毕、正在收尾,无法取消;稍后用 /momo:result ${job.id} 取结果。`);
+  }
+  // 仍在跑:先认领终态(killed)——终态吸收保证它必胜(即便杀 client 触发 runner 的 close 收尾)。
+  // 再验身份杀进程(PID 复用则跳过,绝不误杀)。
   finalizeJob(job.id, { status: "killed", error: "用户取消" });
   terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
   const result = terminateTreeIfOurs(job.pid, job.pid_token);
