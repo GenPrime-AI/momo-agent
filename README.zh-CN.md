@@ -96,12 +96,14 @@ claude plugin install momo@momo-agent
 /momo:continue a1b2 -- 再给错误分支加个单测
 ```
 
-## 客户端与协议(v1)
+## 客户端与协议
 
-| 客户端 | 协议 | 可驱动 | effort 词表 |
+| 客户端 | 协议 | 可驱动 | 客户端 CLI 接受的 effort |
 |---|---|---|---|
-| `claude` | anthropic | GLM、Claude、DeepSeek、Kimi、MiniMax、Qwen…(任何 Anthropic 兼容端点) | low, medium, high, xhigh, max |
-| `codex` | openai | OpenAI / OpenAI 兼容端点 | none, minimal, low, medium, high, xhigh |
+| `claude` | anthropic | GLM、Claude、DeepSeek、Kimi、MiniMax、Qwen…(任何 Anthropic 兼容端点) | `low`、`medium`、`high`、`xhigh`、`max` |
+| `codex` | openai | OpenAI / OpenAI 兼容端点 | `none`、`minimal`、`low`、`medium`、`high`、`xhigh` |
+
+右列是**客户端 CLI** 能接受的 effort 取值,**不代表**每个模型都支持这些档位。具体某个模型/厂商可能只支持其中一部分,或者根本不理会 effort(比如 GLM、DeepSeek 等各自有自己的思考/effort 行为)。某个模型实际提供哪些档位,由它在 `~/.momo/config.json` 里的 `effort` 列表声明;momo 只接受**既在该模型列表里、又被所选 client 认可**的 effort。
 
 新增一个 client = 加一个适配器文件;registry/运行时不用改。
 

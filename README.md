@@ -96,12 +96,14 @@ Unspecified `--client` / `--effort` fall back to the model's first configured op
 /momo:continue a1b2 -- now add a unit test for the error path
 ```
 
-## Clients & protocols (v1)
+## Clients & protocols
 
-| Client | Protocol | Drives | Effort vocab |
+| Client | Protocol | Drives | Effort levels the CLI accepts |
 |---|---|---|---|
-| `claude` | anthropic | GLM, Claude, DeepSeek, Kimi, MiniMax, Qwen … (any Anthropic-compatible endpoint) | low, medium, high, xhigh, max |
-| `codex` | openai | OpenAI / OpenAI-compatible endpoints | none, minimal, low, medium, high, xhigh |
+| `claude` | anthropic | GLM, Claude, DeepSeek, Kimi, MiniMax, Qwen … (any Anthropic-compatible endpoint) | `low`, `medium`, `high`, `xhigh`, `max` |
+| `codex` | openai | OpenAI / OpenAI-compatible endpoints | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+
+The right-hand column is the set of effort values the **client CLI** will accept — **not** a promise that every model honors all of them. A given model / provider may support only a subset, or ignore effort entirely (e.g. GLM, DeepSeek and others each expose their own thinking/effort behavior). You declare the levels a specific model actually offers in its `effort` list in `~/.momo/config.json`, and momo only accepts an effort that is **both** in that model's list **and** legal for the chosen client.
 
 Adding a client = adding one adapter file; the registry/runtime don't change.
 
