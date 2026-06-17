@@ -38,13 +38,15 @@ Turn the answer into the config-set patch shape (it mirrors `~/.momo/config.json
    - `codex --version` (if missing, tell the user to install the `codex` CLI and stop).
    - `codex login status` (if not logged in, ask the user to run `! codex login` in their terminal, then continue).
 
-   Then persist a login provider plus a model whose client is `codex-login` (note: **no `api_key`, no `base_url`**):
+   **Pick a `model_id` the login actually supports.** A *ChatGPT-account* login only accepts the model that account is entitled to and **rejects `gpt-5-codex` / `gpt-5` with HTTP 400** ("not supported when using Codex with a ChatGPT account"). Use the model from the user's `~/.codex/config.toml` `model = "…"` line (e.g. `gpt-5.5`), or confirm with `codex exec -m <id> 'say OK'` before saving. (An *API-key* codex login can use `gpt-5-codex` etc.) Set both the momo model name and its `model_id` to that value.
+
+   Then persist a login provider plus a model whose client is `codex-login` (note: **no `api_key`, no `base_url`**; replace `gpt-5.5` with the confirmed model id):
 
    ```jsonc
    {
      "providers": { "codex-local": { "protocols": ["openai"], "auth": "login" } },
      "models": {
-       "gpt-5-codex": { "provider": "codex-local", "model_id": "gpt-5-codex", "clients": ["codex-login"] }
+       "gpt-5.5": { "provider": "codex-local", "model_id": "gpt-5.5", "clients": ["codex-login"] }
      }
    }
    ```
