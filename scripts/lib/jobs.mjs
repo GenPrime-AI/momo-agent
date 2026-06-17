@@ -105,8 +105,10 @@ export function generateJobId(model) {
   return `${prefix}-${randomBytes(8).toString("hex")}`;
 }
 
-// 原子写:tmp + rename。
-export function writeJob(record) {
+// 原子写:tmp + rename。**私有** —— 任何 job 状态变更都必须经下面的状态机 API
+// (createRunningJob / markRunning / backfill=patchIfActive / heartbeat / finalizeJob),
+// 它们统一走 transition() 加锁 + 终态吸收。模块外不得裸写 job 状态。
+function writeJob(record) {
   ensureJobsDir();
   const file = jobFile(record.id);
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -125,17 +127,6 @@ export function readJob(id) {
   } catch {
     return null;
   }
-}
-
-// 局部更新:读 → merge → 原子写。
-export function patchJob(id, patch) {
-  const existing = readJob(id);
-  if (!existing) {
-    return null;
-  }
-  const next = { ...existing, ...patch };
-  writeJob(next);
-  return next;
 }
 
 export function listJobs() {
@@ -210,60 +201,56 @@ export function createRunningJob({
   return record;
 }
 
-// 每个 job 一把锁,序列化"状态转移"的读-改-写,杜绝 cancel/cleanup/assess/runner 之间的
-// 竞态(否则一个进程的陈旧读会覆盖另一个刚写的终态)。
+// 每个 job 一把锁,序列化"状态转移"的读-改-写。
 function jobLockName(id) {
   return `job-${id}`;
 }
 
-// 进入 thread 锁、真正开跑时调用:queued → running,并把 started_at/last_heartbeat
-// 重置为开跑时刻(排队等锁的时间不计入 wall-clock 超时)。已终态(排队中被 cancel)则不翻。
-export function markRunning(id) {
-  return withLock(jobLockName(id), () => {
-    const cur = readJob(id);
-    if (!cur || isTerminal(cur.status)) return cur;
-    const ts = nowIso();
-    const next = { ...cur, status: "running", started_at: ts, last_heartbeat: ts };
-    writeJob(next);
-    return next;
-  });
-}
-
-// 非终态字段 backfill(pid / client_pid 等):锁内 + 终态守卫。若 job 已被 cancel/cleanup
-// 置终态,绝不用陈旧活动快照写回去复活它。job 不存在则不写。
-export function patchIfActive(id, patch) {
-  return withLock(jobLockName(id), () => {
-    const cur = readJob(id);
-    if (!cur || isTerminal(cur.status)) return cur;
-    const next = { ...cur, ...patch };
-    writeJob(next);
-    return next;
-  });
-}
-
-// runner 周期心跳:更新 last_heartbeat。锁内 + 终态守卫:若 job 已被 cancel/cleanup/assess
-// 置终态,绝不把陈旧的 running 记录(及 _exec)写回去复活它。
-export function heartbeat(id) {
-  return withLock(jobLockName(id), () => {
-    const cur = readJob(id);
-    if (!cur || isTerminal(cur.status)) return cur;
-    writeJob({ ...cur, last_heartbeat: nowIso() });
-    return cur;
-  });
-}
-
-// 写终态(所有终态转移的唯一入口:runner 收尾 / cancel / cleanup / assess 超时·crashed)。
-// 锁内读-改-写 + 终态守卫:磁盘已是终态则原样返回(不复活已 cancel 的 job);并**剥离 _exec**
-// (含运行参数,不长期保留)。patch 可带 status/exit_code/error/session_id/result_text。
-export function finalizeJob(id, patch = {}) {
+// ───────────────────────── 状态机唯一写入口 ─────────────────────────
+// 所有 job 状态变更必经此处。不变量(结构上保证,无需各调用点自觉):
+//   1) 锁内读-改-写:同一 job 的并发变更串行,杜绝陈旧覆盖。
+//   2) 终态吸收:job 一旦进入终态(done/failed/timeout/killed/crashed),任何后续 transition
+//      都原样返回、不再改动 —— 第一个置终态的赢,cancel 不会被迟到的 finalize 复活。
+//   3) apply(cur) 返回新记录则写,返回 null 则不写。
+// 唯一例外是 createRunningJob(创建,无前态),它是 job 的第一次写。
+function transition(id, apply) {
   return withLock(jobLockName(id), () => {
     const cur = readJob(id);
     if (!cur) return null;
-    if (isTerminal(cur.status)) return cur;
-    const { _exec, ...rest } = cur;
-    const next = { ...rest, ...patch, pid: null, last_heartbeat: nowIso() };
+    if (isTerminal(cur.status)) return cur; // 终态吸收
+    const next = apply(cur);
+    if (!next) return cur;
     writeJob(next);
     return next;
+  });
+}
+
+// queued → running:进入 thread 锁、真正开跑时调用,把 started_at/last_heartbeat 重置为
+// 开跑时刻(排队等锁的时间不计入 wall-clock)。已终态(排队中被 cancel)则不翻。
+export function markRunning(id) {
+  return transition(id, (cur) => {
+    const ts = nowIso();
+    return { ...cur, status: "running", started_at: ts, last_heartbeat: ts };
+  });
+}
+
+// 非终态字段 backfill(pid / client_pid 等):活动态才写,终态不复活。
+export function patchIfActive(id, patch) {
+  return transition(id, (cur) => ({ ...cur, ...patch }));
+}
+
+// runner 周期心跳:活动态才更新 last_heartbeat,终态不复活。
+export function heartbeat(id) {
+  return transition(id, (cur) => ({ ...cur, last_heartbeat: nowIso() }));
+}
+
+// 置终态(runner 收尾 / cancel / cleanup / assess 超时·crashed 的唯一入口)。
+// 并**剥离 _exec**(含运行参数与敏感字段,不长期保留)。终态吸收由 transition 保证。
+// patch 可带 status/exit_code/error/session_id/result_text。
+export function finalizeJob(id, patch = {}) {
+  return transition(id, (cur) => {
+    const { _exec, ...rest } = cur;
+    return { ...rest, ...patch, pid: null, last_heartbeat: nowIso() };
   });
 }
 

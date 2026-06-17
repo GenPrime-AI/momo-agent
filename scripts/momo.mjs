@@ -28,8 +28,7 @@ import {
   readJob,
   resolveJobRef,
   soleActiveSession,
-  threadKey,
-  writeJob
+  threadKey
 } from "./lib/jobs.mjs";
 import { acquireLock, threadLockName } from "./lib/lock.mjs";
 import { binaryAvailable, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
