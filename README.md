@@ -1,4 +1,4 @@
-# momo
+# Momo Agent
 
 **Delegate a chunk of work to any vendor's model, running on any compatible CLI client, in the background — and fetch the result back.**
 
