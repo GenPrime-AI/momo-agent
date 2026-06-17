@@ -287,6 +287,31 @@ test("SessionEnd of the last session also reaps unowned running jobs (no leak)",
   }
 });
 
+test("P2: provider api key is never serialized into the job file", async () => {
+  const h = makeHome();
+  try {
+    const cfg = sampleConfig();
+    cfg.providers.zhipu.api_key = "SECRET-DO-NOT-PERSIST";
+    writeConfigFile(h.momoHome, cfg);
+
+    const r = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const id = r.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, id, (j) => j.status === "running" && j.pid > 0);
+
+    const raw = fs.readFileSync(path.join(jobsDir(h.momoHome), `${id}.json`), "utf8");
+    assert.doesNotMatch(raw, /SECRET-DO-NOT-PERSIST/, "api key must not appear in the job file");
+    const job = JSON.parse(raw);
+    assert.equal(job._exec?.apiKey, undefined, "_exec must not carry the api key");
+
+    runMomo(["cancel", id], { home: h.home });
+  } finally {
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());

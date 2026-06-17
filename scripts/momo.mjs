@@ -268,13 +268,14 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     cwd,
     timeout_ms: ctx.timeoutMs
   });
-  // 附加 runner 需要、但不属于状态契约的字段
+  // 附加 runner 需要、但不属于状态契约的字段。
+  // 注意:api_key **不写进 job 文件**(避免明文密钥落进 ~/.momo/jobs/*.json,SIGKILL 后也不残留)
+  // —— 改用 runner 进程的环境变量 MOMO_JOB_API_KEY 传递(仅在内存中)。
   writeJob({
     ...record,
     _exec: {
       modelId: ctx.modelId,
       baseUrl: ctx.baseUrl,
-      apiKey: ctx.apiKey,
       effort: ctx.effort,
       wireApi: ctx.wireApi ?? null,
       task,
@@ -287,7 +288,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
 
   const pid = spawnDetached(process.execPath, [SELF, "__run-job", id], {
     cwd,
-    env: process.env,
+    env: { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey },
     logFile: jobLogFile(id)
   });
   // detached 进程组 leader 的 pid 即整树根
@@ -328,7 +329,7 @@ async function runUnderThreadLock(id, job, exec, client) {
       taskPrompt: exec.task,
       modelId: exec.modelId,
       baseUrl: exec.baseUrl,
-      apiKey: exec.apiKey,
+      apiKey: process.env.MOMO_JOB_API_KEY ?? exec.apiKey, // 密钥从 env 取,不从 job 文件
       effort: exec.effort,
       wireApi: exec.wireApi ?? null,
       sessionId: exec.session_id,
@@ -401,13 +402,8 @@ async function runUnderThreadLock(id, job, exec, client) {
     terminateProcessTree(child.pid, { signal: "SIGKILL" });
     hardExitTimer = setTimeout(() => {
       try {
-        const cur = readJob(id) ?? job;
-        const { _exec, ...rest } = cur;
-        writeJob({
-          ...rest,
+        finalizeJob(id, {
           status: "timeout",
-          pid: null,
-          exit_code: null,
           error: `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s);SIGKILL 后仍未退出,强制收尾`
         });
       } catch {
@@ -428,15 +424,9 @@ async function runUnderThreadLock(id, job, exec, client) {
   clearTimeout(timer);
   if (hardExitTimer) clearTimeout(hardExitTimer);
 
-  // 清理 _exec(运行参数不长期保留)
-  const stripExec = (extra) => {
-    const cur = readJob(id) ?? job;
-    const { _exec, ...rest } = cur;
-    writeJob({ ...rest, ...extra });
-  };
+  // 所有终态都走 finalizeJob(锁内、终态守卫、自动剥离 _exec)。
 
   if (timedOut) {
-    stripExec({});
     finalizeJob(id, {
       status: "timeout",
       exit_code: exit.code,
@@ -447,7 +437,6 @@ async function runUnderThreadLock(id, job, exec, client) {
   }
 
   if (exit.spawnError) {
-    stripExec({});
     finalizeJob(id, { status: "failed", error: mapClientError(exit.spawnError.message, stderr) });
     releaseThread();
     process.exit(1);
@@ -467,14 +456,12 @@ async function runUnderThreadLock(id, job, exec, client) {
     } catch {
       /* keep prior */
     }
-    stripExec({ session_id: sessionId, result_text: resultText });
-    finalizeJob(id, { status: "done", exit_code: 0 });
+    finalizeJob(id, { status: "done", exit_code: 0, session_id: sessionId, result_text: resultText });
     releaseThread();
     process.exit(0);
   }
 
   // 非零退出 → failed,把 stderr 映射成友好错误
-  stripExec({});
   finalizeJob(id, {
     status: "failed",
     exit_code: exit.code,

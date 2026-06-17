@@ -210,11 +210,23 @@ export function createRunningJob({
   return record;
 }
 
+// 每个 job 一把锁,序列化"状态转移"的读-改-写,杜绝 cancel/cleanup/assess/runner 之间的
+// 竞态(否则一个进程的陈旧读会覆盖另一个刚写的终态)。
+function jobLockName(id) {
+  return `job-${id}`;
+}
+
 // 进入 thread 锁、真正开跑时调用:queued → running,并把 started_at/last_heartbeat
-// 重置为开跑时刻(排队等锁的时间不计入 wall-clock 超时)。
+// 重置为开跑时刻(排队等锁的时间不计入 wall-clock 超时)。已终态(排队中被 cancel)则不翻。
 export function markRunning(id) {
-  const ts = nowIso();
-  return patchJob(id, { status: "running", started_at: ts, last_heartbeat: ts });
+  return withLock(jobLockName(id), () => {
+    const cur = readJob(id);
+    if (!cur || isTerminal(cur.status)) return cur;
+    const ts = nowIso();
+    const next = { ...cur, status: "running", started_at: ts, last_heartbeat: ts };
+    writeJob(next);
+    return next;
+  });
 }
 
 // runner 周期心跳:更新 last_heartbeat。
@@ -222,15 +234,19 @@ export function heartbeat(id) {
   return patchJob(id, { last_heartbeat: nowIso() });
 }
 
-// 写终态(runner 正常/失败收尾用)。
-// 若磁盘上已是终态(例如 cancel/SessionEnd 已先把它标成 killed),则不覆盖 —— 否则
-// runner 处理 child close 时迟到的 finalize(done/failed)会把已取消的 job 复活。
-export function finalizeJob(id, { status, exit_code = null, error = null }) {
-  const cur = readJob(id);
-  if (cur && isTerminal(cur.status)) {
-    return cur;
-  }
-  return patchJob(id, { status, exit_code, error, pid: null, last_heartbeat: nowIso() });
+// 写终态(所有终态转移的唯一入口:runner 收尾 / cancel / cleanup / assess 超时·crashed)。
+// 锁内读-改-写 + 终态守卫:磁盘已是终态则原样返回(不复活已 cancel 的 job);并**剥离 _exec**
+// (含运行参数,不长期保留)。patch 可带 status/exit_code/error/session_id/result_text。
+export function finalizeJob(id, patch = {}) {
+  return withLock(jobLockName(id), () => {
+    const cur = readJob(id);
+    if (!cur) return null;
+    if (isTerminal(cur.status)) return cur;
+    const { _exec, ...rest } = cur;
+    const next = { ...rest, ...patch, pid: null, last_heartbeat: nowIso() };
+    writeJob(next);
+    return next;
+  });
 }
 
 // 存活判定(SPEC §4.1)——三招叠加,返回判定后的 view(可能写回 crashed/timeout)。
@@ -247,9 +263,8 @@ export function assessJob(job, opts = {}) {
   if (job.status === "queued") {
     if (!isAlive(job.pid)) {
       if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
-      const updated = patchJob(job.id, {
+      const updated = finalizeJob(job.id, {
         status: "crashed",
-        pid: null,
         error: job.error ?? "排队中进程退出(疑似硬崩)"
       });
       return { ...(updated ?? job), suspectedStuck: false };
@@ -269,9 +284,8 @@ export function assessJob(job, opts = {}) {
   if (Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
     if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
     if (job.pid) terminateProcessTree(job.pid, { signal: "SIGKILL" });
-    const updated = patchJob(job.id, {
+    const updated = finalizeJob(job.id, {
       status: "timeout",
-      pid: null,
       error: job.error ?? `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s),已杀进程树`
     });
     return { ...(updated ?? job), suspectedStuck: false };
@@ -281,9 +295,8 @@ export function assessJob(job, opts = {}) {
   // runner 死了但 client 可能仍存活(被孤立)→ 一并杀掉 client 子树,杜绝孤儿。
   if (!isAlive(job.pid)) {
     if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
-    const updated = patchJob(job.id, {
+    const updated = finalizeJob(job.id, {
       status: "crashed",
-      pid: null,
       error: job.error ?? "进程已退出但未写终态(疑似硬崩)"
     });
     return { ...(updated ?? job), suspectedStuck: false };
