@@ -86,7 +86,10 @@ async function main() {
   // hook 模式由 argv[2] 给出:SessionStart | SessionEnd(缺省按 SessionEnd 处理)。
   const mode = process.argv[2] || "SessionEnd";
   const fromStdin = await readSessionIdFromStdin();
-  const sessionId = fromStdin ?? process.env[SESSION_ID_ENV] ?? null;
+  // stdin 优先;否则用 SessionStart 写进 $CLAUDE_ENV_FILE 的 MOMO_SESSION_ID(本 session 准确),
+  // 再退到 CLAUDE_SESSION_ID。
+  const sessionId =
+    fromStdin ?? process.env[MOMO_SESSION_ID_ENV] ?? process.env[SESSION_ID_ENV] ?? null;
 
   if (mode === "SessionStart") {
     // 1) 写 per-session env 文件,让本 session 的 work 子进程拿到正确的 MOMO_SESSION_ID。

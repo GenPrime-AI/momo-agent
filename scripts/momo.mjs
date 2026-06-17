@@ -295,11 +295,18 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     }
   });
 
-  const pid = spawnDetached(process.execPath, [SELF, "__run-job", id], {
-    cwd,
-    env: { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey },
-    logFile: jobLogFile(id)
-  });
+  let pid;
+  try {
+    pid = spawnDetached(process.execPath, [SELF, "__run-job", id], {
+      cwd,
+      env: { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey },
+      logFile: jobLogFile(id)
+    });
+  } catch (error) {
+    // 后台 runner 没起来(如 cwd 被删):把 queued 记录收尾成 failed,别留 pid:0 僵尸记录。
+    finalizeJob(id, { status: "failed", error: `后台 runner 启动失败: ${error.message}` });
+    fail(`无法启动后台任务: ${error.message}`);
+  }
   // 回填 runner pid(加锁守卫:job 若已被取消/清理,不被陈旧快照复活)。
   patchIfActive(id, { pid });
 }
@@ -462,17 +469,22 @@ async function runUnderThreadLock(id, job, exec, client) {
   if (exit.code === 0) {
     // 解析结果文本 + session id(供后续 continue)
     let resultText = "";
-    let sessionId = job.session_id ?? null;
     try {
       resultText = client.parseResult(stdout) ?? "";
     } catch (error) {
       resultText = stdout;
     }
+    let extracted = null;
     try {
-      sessionId = client.extractSessionId(stdout, { cwd: job.cwd }) ?? sessionId;
+      extracted = client.extractSessionId(stdout, { cwd: job.cwd }) ?? null;
     } catch {
-      /* keep prior */
+      /* none */
     }
+    // 稳定 client(claude):work 钉死的 session_id 本身就是可 resume 的;解析到更准的就用。
+    // 不稳定 client(codex):**只有**真正解析出真实 id 才存;否则置 null,绝不留占位 UUID,
+    // 否则 /momo:continue 会拿假 id 去 resume 不存在的线程。
+    const sessionId =
+      client.sessionIdStable === true ? extracted ?? job.session_id ?? null : extracted;
     finalizeJob(id, { status: "done", exit_code: 0, session_id: sessionId, result_text: resultText });
     releaseThread();
     process.exit(0);
