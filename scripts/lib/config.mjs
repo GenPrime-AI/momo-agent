@@ -135,7 +135,22 @@ export function saveConfig(config) {
   ensureHome();
   const lp = acquireLock();
   try {
-    atomicWrite(configPath(), JSON.stringify(config, null, 2) + "\n");
+    // SPEC §3:若磁盘上已有 config 且被手改坏(无法解析),拒绝覆盖、报错保留原文件。
+    const cp = configPath();
+    if (fs.existsSync(cp)) {
+      const raw = fs.readFileSync(cp, "utf8");
+      if (raw.trim()) {
+        try {
+          JSON.parse(raw);
+        } catch (e) {
+          throw new Error(
+            `现有 ~/.momo/config.json 解析失败(疑似被手改坏):${e.message}。` +
+              `为避免覆盖已拒绝写入,请先修复或删除该文件后重试。`
+          );
+        }
+      }
+    }
+    atomicWrite(cp, JSON.stringify(config, null, 2) + "\n");
   } finally {
     releaseLock(lp);
   }

@@ -23,6 +23,7 @@ import {
   jobLogFile,
   listJobs,
   readJob,
+  readPersistedSessionId,
   resolveJobRef,
   threadKey,
   writeJob
@@ -244,7 +245,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     effort: ctx.effort,
     thread_key,
     session_id,
-    claude_session: process.env[SESSION_ID_ENV] ?? null,
+    claude_session: process.env[SESSION_ID_ENV] ?? readPersistedSessionId() ?? null,
     cwd,
     timeout_ms: ctx.timeoutMs
   });

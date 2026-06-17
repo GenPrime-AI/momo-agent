@@ -6,10 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { isAlive } from "./process.mjs";
+import { isAlive, terminateProcessTree } from "./process.mjs";
 
 const MOMO_HOME = path.join(os.homedir(), ".momo");
 const JOBS_DIR = path.join(MOMO_HOME, "jobs");
+const SESSION_ID_FILE = path.join(MOMO_HOME, "current-session");
 
 export const HEARTBEAT_INTERVAL_MS = 5_000; // runner 心跳间隔(≤5s)
 export const HEARTBEAT_STALE_MS = 30_000; // 超此无心跳 → 疑似卡死
@@ -28,6 +29,26 @@ export function isTerminal(status) {
 
 export function ensureJobsDir() {
   fs.mkdirSync(JOBS_DIR, { recursive: true });
+}
+
+// ——— 主 session id 持久化 ———
+// SessionStart hook 把当前主 session id 落盘;work 记录 claude_session 时,
+// 若 env(CLAUDE_SESSION_ID)缺失则回退读此文件 —— 保证 SessionEnd 清理能匹配到。
+export function persistSessionId(sessionId) {
+  if (!sessionId) return;
+  fs.mkdirSync(MOMO_HOME, { recursive: true });
+  const tmp = `${SESSION_ID_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, String(sessionId), "utf8");
+  fs.renameSync(tmp, SESSION_ID_FILE);
+}
+
+export function readPersistedSessionId() {
+  try {
+    const v = fs.readFileSync(SESSION_ID_FILE, "utf8").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
 }
 
 export function jobFile(id) {
@@ -177,20 +198,26 @@ export function assessJob(job, opts = {}) {
     return { ...job, suspectedStuck: false };
   }
 
-  // 1. wall-clock 超时兜底:runner 没自杀(可能 runner 进程也挂了)→ 标 timeout
+  // 1. wall-clock 超时兜底:runner 没自杀(可能 runner 自身也卡死/挂了)→ 标 timeout。
+  // 关键:置终态前**先杀进程树**(runner + client 两个独立进程组),否则 runner 卡死时
+  // 我们把 job 标成终态、清掉 pid,client 仍在后台跑且 job 已不可 cancel → 孤儿。
   const startedMs = Date.parse(job.started_at ?? "");
   const timeoutMs = Number.isFinite(job.timeout_ms) ? job.timeout_ms : DEFAULT_TIMEOUT_MS;
   if (Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
+    if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
+    if (job.pid) terminateProcessTree(job.pid, { signal: "SIGKILL" });
     const updated = patchJob(job.id, {
       status: "timeout",
       pid: null,
-      error: job.error ?? `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s)`
+      error: job.error ?? `wall-clock 超时(>${Math.round(timeoutMs / 1000)}s),已杀进程树`
     });
     return { ...(updated ?? job), suspectedStuck: false };
   }
 
-  // 2. pid 探活:status==running 但 pid 已死 → crashed(硬崩没写终态)
+  // 2. pid 探活:status==running 但 runner pid 已死 → crashed(硬崩没写终态)。
+  // runner 死了但 client 可能仍存活(被孤立)→ 一并杀掉 client 子树,杜绝孤儿。
   if (!isAlive(job.pid)) {
+    if (job.client_pid) terminateProcessTree(job.client_pid, { signal: "SIGKILL" });
     const updated = patchJob(job.id, {
       status: "crashed",
       pid: null,

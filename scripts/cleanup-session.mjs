@@ -3,7 +3,12 @@
 // 不留孤儿(SPEC §2.2)。主 session id 从 hook stdin JSON 或环境变量取。
 import process from "node:process";
 
-import { finalizeJob, listRunningBySession } from "./lib/jobs.mjs";
+import {
+  finalizeJob,
+  listRunningBySession,
+  persistSessionId,
+  readPersistedSessionId
+} from "./lib/jobs.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
 
 const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
@@ -50,9 +55,23 @@ async function readSessionIdFromStdin() {
 }
 
 async function main() {
+  // hook 模式由 argv[2] 给出:SessionStart | SessionEnd(缺省按 SessionEnd 处理)。
+  const mode = process.argv[2] || "SessionEnd";
   const fromStdin = await readSessionIdFromStdin();
   const sessionId = fromStdin ?? process.env[SESSION_ID_ENV] ?? null;
-  const killed = cleanupSession(sessionId);
+
+  if (mode === "SessionStart") {
+    // 持久化当前主 session id,供后续 work 在 env 缺失时回退记录 claude_session,
+    // 保证 SessionEnd 能匹配并清理本 session 的 job(SPEC §2.2)。
+    if (sessionId) persistSessionId(sessionId);
+    process.stdout.write(`momo: session ${sessionId ?? "?"} 已记录\n`);
+    return;
+  }
+
+  // SessionEnd:清理本 session 的 running job。session id 取 stdin/env,
+  // 再回退到 SessionStart 落盘的值。
+  const effectiveId = sessionId ?? readPersistedSessionId();
+  const killed = cleanupSession(effectiveId);
   process.stdout.write(`momo cleanup: 杀掉 ${killed.length} 个 running job\n`);
 }
 
