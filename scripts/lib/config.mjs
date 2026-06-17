@@ -263,18 +263,26 @@ export function validateConfig(config) {
         }
       }
     }
-    if (!prov.base_url || typeof prov.base_url !== "object" || Array.isArray(prov.base_url)) {
-      errors.push(`${tag} must have a base_url object (keyed by protocol).`);
-    } else if (Array.isArray(prov.protocols)) {
-      for (const proto of prov.protocols) {
-        const u = prov.base_url[proto];
-        if (!u || typeof u !== "string") {
-          errors.push(`${tag} is missing a base_url for protocol "${proto}".`);
+    // A provider may declare auth:"login" to drive a client via its own login (e.g. codex-login):
+    // such a provider needs neither api_key nor base_url. Any other auth value is rejected.
+    const isLogin = prov.auth === "login";
+    if (prov.auth !== undefined && prov.auth !== "login") {
+      errors.push(`${tag} has unknown auth "${prov.auth}". Only "login" is supported.`);
+    }
+    if (!isLogin) {
+      if (!prov.base_url || typeof prov.base_url !== "object" || Array.isArray(prov.base_url)) {
+        errors.push(`${tag} must have a base_url object (keyed by protocol).`);
+      } else if (Array.isArray(prov.protocols)) {
+        for (const proto of prov.protocols) {
+          const u = prov.base_url[proto];
+          if (!u || typeof u !== "string") {
+            errors.push(`${tag} is missing a base_url for protocol "${proto}".`);
+          }
         }
       }
-    }
-    if (typeof prov.api_key !== "string" || prov.api_key.trim() === "") {
-      errors.push(`${tag} is missing api_key.`);
+      if (typeof prov.api_key !== "string" || prov.api_key.trim() === "") {
+        errors.push(`${tag} is missing api_key.`);
+      }
     }
   }
 

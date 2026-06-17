@@ -72,3 +72,23 @@ test("resolve: codex-login needs no key/base_url and finds the codex binary", ()
   assert.equal(ctx.modelId, "gpt-5-codex");
   assert.ok(ctx.binaryPath.endsWith(`${path.sep}codex`));
 });
+
+import { validateConfig } from "../scripts/lib/config.mjs";
+
+test("validateConfig: auth:'login' provider may omit api_key and base_url", () => {
+  assert.deepEqual(validateConfig(loginConfig()), []);
+});
+
+test("validateConfig: a non-login provider with no api_key still errors", () => {
+  const cfg = loginConfig();
+  delete cfg.providers["codex-local"].auth; // now a plain provider
+  const errs = validateConfig(cfg);
+  assert.ok(errs.some((e) => /missing api_key/.test(e)), errs.join(" | "));
+});
+
+test("validateConfig: unknown auth value is rejected", () => {
+  const cfg = loginConfig();
+  cfg.providers["codex-local"].auth = "oauth2";
+  const errs = validateConfig(cfg);
+  assert.ok(errs.some((e) => /unknown auth/.test(e)), errs.join(" | "));
+});
