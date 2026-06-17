@@ -86,7 +86,14 @@ function resolveModelView(modelName) {
 }
 
 const SELF = fileURLToPath(import.meta.url);
-const SESSION_ID_ENV = "CLAUDE_SESSION_ID"; // 主 session id 注入环境变量
+// 主 session id:优先 MOMO_SESSION_ID(SessionStart 钩子经 $CLAUDE_ENV_FILE 注入,
+// per-session 准确、多 session 不串),其次 CLAUDE_SESSION_ID,最后单活跃 session 兜底。
+const MOMO_SESSION_ID_ENV = "MOMO_SESSION_ID";
+const SESSION_ID_ENV = "CLAUDE_SESSION_ID";
+
+function currentSessionId() {
+  return process.env[MOMO_SESSION_ID_ENV] ?? process.env[SESSION_ID_ENV] ?? soleActiveSession() ?? null;
+}
 
 function fail(message, code = 1) {
   process.stderr.write(`momo: ${message}\n`);
@@ -254,7 +261,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     effort: ctx.effort,
     thread_key,
     session_id,
-    claude_session: process.env[SESSION_ID_ENV] ?? soleActiveSession() ?? null,
+    claude_session: currentSessionId(),
     cwd,
     timeout_ms: ctx.timeoutMs
   });
@@ -307,6 +314,14 @@ async function cmdRunJob(argv) {
 // 同 thread_key 的并发 continue 在此排队,避免线程历史写坏(SPEC §4.3)。
 async function runUnderThreadLock(id, job, exec, client) {
   const releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: 600_000 });
+
+  // 进入锁后(可能已在队列里等了很久)才把 started_at 重置为真正开跑的时刻 ——
+  // 否则排在长任务后面的 continue 会把排队时间算进 wall-clock,被 status 误判 timeout。
+  {
+    const cur = readJob(id) ?? job;
+    const ts = new Date().toISOString();
+    writeJob({ ...cur, started_at: ts, last_heartbeat: ts });
+  }
 
   let invocation;
   try {
@@ -588,7 +603,7 @@ function cmdConfigSet(argv) {
 // ——— cleanup(SessionEnd 也可经 cleanup-session.mjs)———
 async function cmdCleanup() {
   const { cleanupSession } = await import("./cleanup-session.mjs");
-  const sessionId = process.env[SESSION_ID_ENV] ?? null;
+  const sessionId = currentSessionId();
   const killed = cleanupSession(sessionId);
   process.stdout.write(`cleanup: 杀掉 ${killed.length} 个 running job\n`);
 }

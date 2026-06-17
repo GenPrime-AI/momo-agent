@@ -203,6 +203,64 @@ test("P2: continue is rejected while the base job is still running", async () =>
   }
 });
 
+test("SessionStart writes 'export MOMO_SESSION_ID' into $CLAUDE_ENV_FILE", () => {
+  const h = setup();
+  try {
+    const envFile = path.join(h.home, "claude-env");
+    fs.writeFileSync(envFile, "");
+    const r = runCleanup(["SessionStart"], {
+      home: h.home,
+      env: { CLAUDE_ENV_FILE: envFile },
+      input: JSON.stringify({ session_id: "sess-ENV" }),
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const written = fs.readFileSync(envFile, "utf8");
+    assert.match(written, /export MOMO_SESSION_ID='sess-ENV'/, "per-session id must be exported to env file");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("work prefers MOMO_SESSION_ID env for job ownership", async () => {
+  const h = setup();
+  try {
+    const w = runMomo(["work", "--model", "glm-5.2", "--", "x"], {
+      home: h.home,
+      env: { MOMO_SESSION_ID: "sess-MOMO", MOCK_RESULT: "ok" },
+    });
+    const id = w.stdout.match(/job\s+([^\s(]+)/)[1];
+    const job = await waitForJob(h.momoHome, id, (j) => j.status === "done");
+    assert.equal(job.claude_session, "sess-MOMO");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("SessionEnd of the last session also reaps unowned running jobs (no leak)", async () => {
+  const h = setup();
+  try {
+    // No session vars and no active sessions -> job is unowned (claude_session null).
+    const r = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const id = r.stdout.match(/job\s+([^\s(]+)/)[1];
+    const running = await waitForJob(h.momoHome, id, (j) => j.status === "running" && j.pid > 0);
+    assert.equal(running.claude_session, null, "job should be unowned");
+
+    // SessionEnd with no active sessions => this is the last session => reap unowned.
+    const clean = runCleanup(["SessionEnd"], {
+      home: h.home,
+      input: JSON.stringify({ session_id: "sess-LAST" }),
+    });
+    assert.equal(clean.status, 0, clean.stderr);
+    const job = await waitForJob(h.momoHome, id, (j) => j.status === "killed", { timeoutMs: 4000 });
+    assert.equal(job.status, "killed", "unowned job must be reaped when the last session ends");
+  } finally {
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());

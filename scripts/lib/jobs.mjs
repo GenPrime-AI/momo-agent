@@ -207,7 +207,13 @@ export function heartbeat(id) {
 }
 
 // 写终态(runner 正常/失败收尾用)。
+// 若磁盘上已是终态(例如 cancel/SessionEnd 已先把它标成 killed),则不覆盖 —— 否则
+// runner 处理 child close 时迟到的 finalize(done/failed)会把已取消的 job 复活。
 export function finalizeJob(id, { status, exit_code = null, error = null }) {
+  const cur = readJob(id);
+  if (cur && isTerminal(cur.status)) {
+    return cur;
+  }
   return patchJob(id, { status, exit_code, error, pid: null, last_heartbeat: nowIso() });
 }
 
@@ -268,6 +274,17 @@ export function listActiveJobs() {
 // 按 claude_session 取 running job(SessionEnd 清理用)。
 export function listRunningBySession(claudeSession) {
   return listJobs().filter((j) => j.status === "running" && j.claude_session === claudeSession);
+}
+
+// 无归属(claude_session 为空)的 running job —— 当最后一个活跃 session 结束、
+// 已无 session 能认领它们时,SessionEnd 据此清掉,避免泄漏。
+export function listRunningUnowned() {
+  return listJobs().filter((j) => j.status === "running" && !j.claude_session);
+}
+
+// 当前活跃 session 列表(SessionEnd 判断"是否最后一个"用)。
+export function activeSessions() {
+  return readActiveSessions();
 }
 
 export { MOMO_HOME, JOBS_DIR };
