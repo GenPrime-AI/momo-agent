@@ -1,4 +1,4 @@
-// SPEC §10 — registry / resolve: default client+effort, protocol-incompatible
+// registry / resolve: default client+effort, protocol-incompatible
 // client, illegal effort (claude=max ok / codex=max bad; codex=none ok /
 // claude=none bad), unknown model, missing key.
 import { test } from "node:test";

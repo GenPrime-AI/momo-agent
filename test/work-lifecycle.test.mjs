@@ -1,4 +1,4 @@
-// SPEC §10 — work lifecycle with the mock client:
+// work lifecycle with the mock client:
 //   done / failed (crash) / crashed (hard-crash) / timeout (hang) / killed (cancel).
 import { test } from "node:test";
 import assert from "node:assert/strict";

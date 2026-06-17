@@ -12,7 +12,7 @@ export const SCRIPTS = path.resolve(HERE, "..", "scripts");
 export const MOMO = path.join(SCRIPTS, "momo.mjs");
 export const CLEANUP = path.join(SCRIPTS, "cleanup-session.mjs");
 
-// A sample, fully-valid config (SPEC §3 shape).
+// A sample, fully-valid config.
 export function sampleConfig() {
   return {
     version: 1,

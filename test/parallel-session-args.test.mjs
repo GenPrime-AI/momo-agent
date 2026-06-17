@@ -1,4 +1,4 @@
-// SPEC §10 — parallel jobs, same-thread serialization, session cleanup,
+// parallel jobs, same-thread serialization, session cleanup,
 // and form-C arg parsing.
 import { test } from "node:test";
 import assert from "node:assert/strict";

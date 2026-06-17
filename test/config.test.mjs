@@ -1,4 +1,4 @@
-// SPEC §10 — config: structured config-set validation pass/fail, atomic write,
+// config: structured config-set validation pass/fail, atomic write,
 // broken JSON is never overwritten.
 import { test } from "node:test";
 import assert from "node:assert/strict";
