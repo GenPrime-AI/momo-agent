@@ -66,9 +66,15 @@ function jobLine(job) {
   return parts.filter(Boolean).join("  ");
 }
 
-// /momo:status (all) — list of assessed jobs.
-export function renderStatusList(jobs) {
-  if (!jobs || jobs.length === 0) {
+// /momo:status (all) — list of assessed jobs. `page`, when given, is the pagination
+// context { page, pageSize, total } for the slice being shown; it only adds a footer line.
+export function renderStatusList(jobs, page) {
+  const shown = jobs ? jobs.length : 0;
+  if (shown === 0) {
+    // No jobs at all vs. a page past the end of a non-empty list.
+    if (page && page.total > 0) {
+      return `No jobs on page ${page.page} (total ${page.total}). Go back with /momo:status 1.`;
+    }
     return "No momo jobs. Dispatch one with /momo:work.";
   }
   const isActive = (s) => s === "running" || s === "queued"; // queued = waiting on the lock, also counts as in progress
@@ -84,7 +90,23 @@ export function renderStatusList(jobs) {
   if (finished.length) {
     sections.push(["Finished:", ...finished.map((j) => `  ${jobLine(j)}`)].join("\n"));
   }
+  const footer = paginationFooter(page, shown);
+  if (footer) {
+    sections.push(footer);
+  }
   return sections.join("\n\n");
+}
+
+// Footer under a paginated status list: position + how to reach the next page.
+function paginationFooter(page, shown) {
+  if (!page || page.total <= shown) {
+    return ""; // single page — nothing more to show
+  }
+  const start = (page.page - 1) * page.pageSize + 1;
+  const end = start + shown - 1;
+  const totalPages = Math.max(1, Math.ceil(page.total / page.pageSize));
+  const next = page.page < totalPages ? ` Next page: /momo:status ${page.page + 1}.` : "";
+  return `Showing ${start}-${end} of ${page.total} (page ${page.page}/${totalPages}).${next}`;
 }
 
 // /momo:status <job-id> (single).

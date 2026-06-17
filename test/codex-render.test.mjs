@@ -211,6 +211,28 @@ test("renderStatusList handles empty input", () => {
   assert.match(renderStatusList([]), /No momo jobs/);
 });
 
+test("renderStatusList paginates: footer points to the next page, and shows only the slice", () => {
+  const slice = Array.from({ length: 10 }, (_, i) => ({
+    id: `glm-${i}`, status: "done", model: "glm", client: "claude", effort: "high", started_at: "x",
+  }));
+  const out = renderStatusList(slice, { page: 1, pageSize: 10, total: 23 });
+  assert.match(out, /Showing 1-10 of 23 \(page 1\/3\)/);
+  assert.match(out, /Next page: \/momo:status 2/);
+
+  // last page: no "next page" hint
+  const last = renderStatusList(slice.slice(0, 3), { page: 3, pageSize: 10, total: 23 });
+  assert.match(last, /page 3\/3/);
+  assert.doesNotMatch(last, /Next page/);
+
+  // single page (total fits): no footer at all
+  const one = renderStatusList(slice.slice(0, 2), { page: 1, pageSize: 10, total: 2 });
+  assert.doesNotMatch(one, /Showing|Next page/);
+
+  // a page past the end of a non-empty list
+  const past = renderStatusList([], { page: 9, pageSize: 10, total: 23 });
+  assert.match(past, /No jobs on page 9 \(total 23\)/);
+});
+
 test("queued jobs render as in-progress, not finished", () => {
   const list = renderStatusList([
     { id: "j-1", status: "queued", model: "glm-5.2", client: "claude", effort: "high", started_at: "x" },

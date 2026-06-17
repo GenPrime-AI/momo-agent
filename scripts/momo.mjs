@@ -738,11 +738,19 @@ function mapClientError(base, stderr) {
 }
 
 // ——— status ———
+const STATUS_PAGE_SIZE = 10;
+
 function cmdStatus(argv) {
-  const reference = argv[0];
-  if (!reference) {
-    const jobs = listJobs().map((j) => assessJob(j));
-    process.stdout.write(`${renderStatusList(jobs)}\n`);
+  const reference = (argv[0] ?? "").trim();
+  // Bare (no arg) or a plain page number → paginated list, newest first, 10 per page.
+  // A bare integer is unambiguous: job ids always carry a model prefix (e.g. glm-5.1-ab12cd34).
+  if (!reference || /^\d+$/.test(reference)) {
+    const page = reference ? Math.max(1, parseInt(reference, 10)) : 1;
+    const all = listJobs(); // already sorted newest-first
+    const start = (page - 1) * STATUS_PAGE_SIZE;
+    const slice = all.slice(start, start + STATUS_PAGE_SIZE).map((j) => assessJob(j));
+    const meta = { page, pageSize: STATUS_PAGE_SIZE, total: all.length };
+    process.stdout.write(`${renderStatusList(slice, meta)}\n`);
     return;
   }
   let job;

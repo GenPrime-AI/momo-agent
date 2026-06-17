@@ -1,6 +1,6 @@
 ---
-description: Show momo job status. With a job-id shows that one job; bare shows all jobs. Liveness is verified (pid probe + heartbeat + timeout), not just the stored status field.
-argument-hint: "[job-id]"
+description: Show momo job status. Bare shows the 10 most recent jobs (one page); a page number shows the next page; a job-id shows that one job. Liveness is verified (pid probe + heartbeat + timeout), not just the stored status field.
+argument-hint: "[job-id | page-number]"
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
@@ -9,5 +9,6 @@ allowed-tools: Bash(node:*)
 
 Present the command output to the user as-is.
 
-- If no job-id was passed: the output lists all jobs. Render it compactly (a table is fine). Preserve the actionable fields: job id, model, client, effort, status, and any follow-up hints (e.g. `/momo:result <id>`, `/momo:cancel <id>`).
+- If no argument was passed: the output is the first page — the 10 most recent jobs, newest first. If there are more, the footer says `Next page: /momo:status 2`. Render it compactly (a table is fine). Preserve the actionable fields: job id, model, client, effort, status, the pagination footer, and any follow-up hints (e.g. `/momo:result <id>`, `/momo:cancel <id>`). Do not fetch further pages on your own — only when the user asks.
+- If a page number was passed (e.g. `2`): show that page of 10, with the same footer.
 - If a job-id was passed: show the full output for that job, including any liveness note (e.g. crashed / suspected-stuck / timeout). Do not summarize or condense it.
