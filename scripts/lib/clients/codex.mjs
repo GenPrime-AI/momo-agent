@@ -24,24 +24,29 @@ export default {
   //   wireApi: protocol type of the OpenAI-compatible endpoint. Plain OpenAI-compatible (e.g. GLM /paas/v4) uses
   //   "chat" (Chat Completions); codex-native models (gpt-5-codex) need "responses".
   //   Defaults to "chat" when unspecified. Driven by the optional wire_api field on the model/provider (passed through by resolve).
-  buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi }) {
-    // Explicit wireApi wins; otherwise auto-detect by model: codex-native models (name contains codex,
-    // e.g. gpt-5-codex) use "responses", plain OpenAI-compatible endpoints use "chat".
-    const wire = wireApi || (/codex/i.test(String(modelId)) ? "responses" : "chat");
-    const providerOverrides = [
-      "-c", 'model_provider="momo"',
-      "-c", 'model_providers.momo.name="momo"',
-      "-c", `model_providers.momo.base_url="${baseUrl}"`,
-      "-c", 'model_providers.momo.env_key="MOMO_API_KEY"',
-      "-c", `model_providers.momo.wire_api="${wire}"`,
-    ];
-    if (effort) providerOverrides.push("-c", `model_reasoning_effort="${effort}"`); // optional
+  buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi, native }) {
+    // Provider overrides (custom endpoint) — proxy path only. Native inherits the client's own
+    // auth (ChatGPT login in $CODEX_HOME/auth.json, kept even under --ignore-user-config), so it
+    // points at no custom provider.
+    const overrides = [];
+    if (!native) {
+      // Explicit wireApi wins; otherwise auto-detect by model: codex-native models (name contains codex,
+      // e.g. gpt-5-codex) use "responses", plain OpenAI-compatible endpoints use "chat".
+      const wire = wireApi || (/codex/i.test(String(modelId)) ? "responses" : "chat");
+      overrides.push(
+        "-c", 'model_provider="momo"',
+        "-c", 'model_providers.momo.name="momo"',
+        "-c", `model_providers.momo.base_url="${baseUrl}"`,
+        "-c", 'model_providers.momo.env_key="MOMO_API_KEY"',
+        "-c", `model_providers.momo.wire_api="${wire}"`,
+      );
+    }
+    // model_reasoning_effort is a generic config override (works for both paths); forwarded only when given.
+    if (effort) overrides.push("-c", `model_reasoning_effort="${effort}"`);
 
-    // Isolation: --ignore-user-config (don't load $CODEX_HOME/config.toml) + --ignore-rules (don't load
-    // user/project .rules) — delegated behavior is determined only by the task body + chosen provider/model, consistent across machines.
-    // --json: events are written as JSONL to stdout, parseResult takes the last agent message (not the whole log-mixed blob).
-    // --dangerously-bypass-approvals-and-sandbox: delegation is headless, no one to approve; bypass by default lets codex
-    // execute/read/write autonomously (recommended in an isolated worktree). Aligned with the claude adapter's --dangerously-skip-permissions.
+    // Isolation: --ignore-user-config (don't load $CODEX_HOME/config.toml; auth.json is separate and kept)
+    // + --ignore-rules (don't load user/project .rules). --json: JSONL events on stdout.
+    // --dangerously-bypass-approvals-and-sandbox: headless delegation, no one to approve.
     const iso = [
       "--ignore-user-config",
       "--ignore-rules",
@@ -49,18 +54,19 @@ export default {
       "--skip-git-repo-check",
       "--dangerously-bypass-approvals-and-sandbox"
     ];
+    // -m only when a model id is configured; native with no model id inherits the client default.
+    const model = modelId ? ["-m", modelId] : [];
     let argv;
     if (resume) {
       // Form: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
-      // Options (including -c provider overrides and -m) must come before SESSION_ID, else they're misparsed as positional args.
-      argv = ["exec", "resume", ...iso, ...providerOverrides, "-m", modelId, sessionId, taskPrompt];
+      // Options (including -c overrides and -m) must come before SESSION_ID, else they're misparsed as positional args.
+      argv = ["exec", "resume", ...iso, ...overrides, ...model, sessionId, taskPrompt];
     } else {
-      argv = ["exec", ...iso, "-m", modelId, ...providerOverrides, taskPrompt];
+      argv = ["exec", ...iso, ...model, ...overrides, taskPrompt];
     }
 
-    const env = {
-      MOMO_API_KEY: apiKey,
-    };
+    // Native: inject nothing — codex uses its own logged-in credentials.
+    const env = native ? {} : { MOMO_API_KEY: apiKey };
 
     return { command: "codex", argv, env, files: [] };
   },

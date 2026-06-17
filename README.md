@@ -11,6 +11,7 @@
 ## Highlights
 
 - **Any provider, one workflow** — drive any Anthropic-compatible model through the `claude` CLI, any OpenAI-compatible model through `codex`. Configure once, use them all the same way.
+- **Built-in native models, zero config** — `claude` and `codex` work out of the box, using whatever login the CLI already has on your machine (a subscription, or your own global env). No provider, key, or endpoint to set. See [Built-in native models](#built-in-native-models).
 - **Two background modes** — ride Claude Code's own background (`/momo:run`, get auto-notified) or momo-managed jobs (`/momo:work`, fan out & manage).
 - **Parallel fan-out** — fire many tasks at once; track them with status / result / cancel / continue.
 - **Natural-language trigger** — say "momo …" and it routes for you; no slash required.
@@ -19,7 +20,7 @@
 
 - [Claude Code](https://code.claude.com).
 - The client CLI you intend to use: **`claude`** (for Anthropic-protocol models) and/or **`codex`** (for OpenAI-protocol models).
-- An API key for each provider you configure.
+- An API key for each **custom** provider you configure. The built-in native `claude` / `codex` need none — they reuse the CLI's own login.
 
 ## Install
 
@@ -33,14 +34,43 @@ Start a new Claude Code session — the `/momo:*` commands (and the `momo` natur
 ## Quick start
 
 ```text
-/momo:config                  # conversational: momo asks, you answer (provider, model, key…)
-/momo:list                    # see what's configured
+/momo:run --model claude -- summarize ./src architecture in 5 bullets   # zero config — uses your existing claude login
+/momo:config                  # conversational: add custom providers/models (GLM, DeepSeek, …)
+/momo:list                    # see what's available (built-in native + your configured models)
 /momo:run --model glm-4.6 -- summarize ./src architecture in 5 bullets   # delegate; you're notified when done
 ```
 
 ---
 
+## Built-in native models
+
+Two models always exist without any configuration:
+
+| Model    | Client   | Auth                                              |
+| -------- | -------- | ------------------------------------------------- |
+| `claude` | `claude` | whatever the `claude` CLI is logged into          |
+| `codex`  | `codex`  | whatever the `codex` CLI is logged into (if installed) |
+
+"Native" means momo injects **nothing** — no provider, no key, no endpoint. The delegated run inherits exactly the auth the client already has on this machine: a subscription OAuth login, or a custom provider you've set globally via env. momo only isolates the run from your settings/hooks/CLAUDE.md; it never touches auth.
+
+```text
+/momo:run --model claude -- review the diff on this branch and flag risky changes
+/momo:run --model claude --effort high -- design a migration plan for the users table
+```
+
+- No setup: if you can use `claude` / `codex` yourself, momo can delegate to them.
+- `codex` only appears in `/momo:list` when the `codex` CLI is installed and logged in.
+- `--effort` is forwarded when given; otherwise the client picks its own default.
+- A custom model you configure with the same name takes precedence over the built-in.
+
+> Note: native runs use your subscription/login, so they share its rate limits — fanning out many parallel native jobs can hit them.
+
+---
+
 ## Configure
+
+You only need this for **custom providers** (GLM, DeepSeek, Kimi, …). The built-in native `claude` / `codex` need no config.
+
 
 `/momo:config` is **conversational** and takes no arguments. Run it; momo asks what you want to set and walks you through it — you answer in plain language, step by step. It never assumes a provider or model; it only stores what you tell it.
 
@@ -89,12 +119,16 @@ It writes `~/.momo/config.json` (plaintext keys — on your machine, never in th
 ```
 ```text
 MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
---------  --------  ---------  -------  ----------------
+--------  --------  ---------  -------  ---------------------------------
 glm-5.2   zhipu     anthropic  claude*  high*,medium,low
 deepseek  deepseek  anthropic  claude*
+claude    native    anthropic  claude*  low,medium,high,xhigh,max
+codex     native    openai     codex*   none,minimal,low,medium,high,xhigh
 
 * = default
 ```
+
+`provider: native` rows are the built-in models — no config, auth inherited from the client.
 
 ### `/momo:run` — delegate, non-blocking, notify me when done
 
@@ -186,7 +220,7 @@ Two layers:
 - **Protocol layer** — a model is usable by a client when the client speaks a protocol the model's endpoint exposes. GLM exposes the Anthropic protocol, so the `claude` CLI can drive it (just point base URL + key + model). A model that only speaks its own tool's protocol is driven by that tool (e.g. `codex` for OpenAI's Responses API).
 - **Application layer** — slash commands + a background runtime. A job is resolved from `(model, client, effort)`, the client is spawned as an isolated headless process, and you interact via the commands above.
 
-Delegated runs are **isolated** from your local config (`claude --bare`; `codex --ignore-user-config --ignore-rules`) and run with bypass-permission so a headless job can read/write files in its working directory. Jobs run under a per-thread **FIFO** lock (same-thread continuations execute in order) and are tracked with a verifiable process identity (a recycled PID can never kill an unrelated process).
+Delegated runs are **isolated** from your local config (configured models: `claude --bare`; native models: `claude --setting-sources "" --strict-mcp-config`, which keeps OAuth login while skipping settings/hooks/CLAUDE.md; `codex --ignore-user-config --ignore-rules` for both) and run with bypass-permission so a headless job can read/write files in its working directory. Jobs run under a per-thread **FIFO** lock (same-thread continuations execute in order) and are tracked with a verifiable process identity (a recycled PID can never kill an unrelated process).
 
 > The delegated subprocess does **not** see your main conversation — it only sees the task text you pass (and, for `/momo:continue`, its own prior thread). Put the context the task needs into the task itself, or point it at files in the working directory.
 
