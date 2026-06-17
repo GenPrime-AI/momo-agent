@@ -500,11 +500,20 @@ async function runUnderThreadLock(id, job, exec, client) {
 
   let stdout = "";
   let stderr = "";
+  // 有界缓冲:只保留尾部 —— client 的最终结果(claude 的 result JSON / codex 的末条 agent_message)
+  // 都在输出尾部。这样无论 client 多啰嗦(codex --json 的海量 JSONL、超长答案)runner 内存都封顶,
+  // 不会 OOM 丢结果。
+  const MAX_STDOUT = 4 * 1024 * 1024;
+  const MAX_STDERR = 64 * 1024;
+  const tailAppend = (buf, chunk, max) => {
+    const next = buf + chunk;
+    return next.length > max ? next.slice(next.length - max) : next;
+  };
   child.stdout.on("data", (d) => {
-    stdout += d.toString();
+    stdout = tailAppend(stdout, d.toString(), MAX_STDOUT);
   });
   child.stderr.on("data", (d) => {
-    stderr += d.toString();
+    stderr = tailAppend(stderr, d.toString(), MAX_STDERR);
   });
 
   // 心跳:每 ≤5s 更新 last_heartbeat

@@ -282,6 +282,18 @@ work 子进程无任何官方信号可判断自己属于哪个 session(detached 
 SessionEnd 统一清掉(§7)。即:极端退化场景下,清理时机从"原 session 关闭"放宽到"最后一个 session 关闭",
 但绝不误杀、绝不永久泄漏。
 
+## 10.6 已知取舍(经分级评估,有意不做)
+
+以下为审查中识别、经工程分级后**有意不修**的项,均为罕见/降级而非崩溃,记录在此:
+
+- **进程身份强化仅 POSIX**:PID 复用防护用 `ps -o lstart=,args=` token,仅 macOS/Linux。Windows
+  无对应原语 → 退回 best-effort 裸存活(锁/杀按 isAlive)。momo 的整套(进程组信号、ps)本就面向
+  POSIX;不为 Windows 实现原生身份原语。
+- **超大单条结果(>4MB)可能被尾部截断**:client 输出用 4MB 有界缓冲防 OOM。绝大多数结果远小于此;
+  codex 海量 JSONL 的最终消息在尾部,不受影响。未来如需精确可改用 codex `-o` 末条消息文件。
+- **`ps` 彻底持续失败(极罕见)**:token 捕获带退避重试;若仍全失败,该 live job 可能逃过一次
+  cancel/cleanup(可由用户重试)。锁对 null-token 活持有者给 STALE_MS 时长宽限,不会永久死锁。
+
 ## 11. 不做(明确 out of scope)
 
 - 跨 job 的文件冲突协调 / 合并(调度者负责)。

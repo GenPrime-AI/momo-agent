@@ -37,6 +37,14 @@ export function procToken(pid) {
     }
     // 进程不存在 → ps 退出非 0,直接返回 null(无需重试)
     if (r.status != null && r.status !== 0) return null;
+    // error(如 ps 派生瞬时失败)→ 短退避后重试
+    if (i < 2) {
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      } catch {
+        /* ignore */
+      }
+    }
   }
   return null;
 }
