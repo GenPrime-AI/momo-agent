@@ -51,7 +51,7 @@ import {
   defaultEffortForClient,
   compatibleClients
 } from "./lib/registry.mjs";
-import { resolve as resolveExecContext } from "./lib/resolve.mjs";
+import { resolve as resolveExecContext, resolveForContinue } from "./lib/resolve.mjs";
 import { getClient } from "./lib/clients/index.mjs";
 
 // 把 resolve() 的执行上下文补成 runtime 期望的形态(补 timeoutMs)。
@@ -63,6 +63,16 @@ function resolveContext(opts) {
   const timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0
     ? envTimeout
     : ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return { ...ctx, timeoutMs };
+}
+
+// /momo:continue 专用:用 job 持久化的原始后端身份重建上下文(+ timeoutMs 兜底)。
+function resolveContinueContext(base) {
+  const config = loadConfig();
+  const ctx = resolveForContinue(config, base);
+  const envTimeout = Number(process.env.MOMO_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return { ...ctx, timeoutMs };
 }
 
@@ -104,6 +114,9 @@ function fail(message, code = 1) {
 
 // ——— form C 参数解析:全 flag,任务正文在 `--` 之后 ———
 // 返回 { flags: {model,client,effort,...}, task: string|null }
+// 契约(见 agents/momo-runner.md):调用方把任务作为**单个 shell 引号参数**传在 `--` 之后,
+// 因此 `--` 后通常只有一个 argv 元素,join(" ") 即原样返回(空格/换行/缩进保真)。仅当调用方
+// 误传成多个裸 token 时才退化为单空格连接 —— 那是 shell 分词造成的,momo 已无从还原。
 function parseFormC(argv) {
   const flags = {};
   const dashDashIdx = argv.indexOf("--");
@@ -239,16 +252,11 @@ function cmdContinue(argv) {
     fail(`job ${base.id} 没有可 resume 的 session_id(原 job 可能未成功建立会话)`);
   }
 
-  // 重新解析执行上下文:拿 provider 当前的 key/base_url(可能已轮换),但沿用原 job 的
-  // model/client/effort,且 allowHistorical=true —— 不因 model 配置后续改动而让老线程无法 resume。
+  // 用原始后端身份(persist 在 job 里)重建上下文,只取当前 provider 的 key/base_url
+  // (允许凭证轮换)。不经 model 别名 → 即便 model 名被重指到别的 backend,老线程仍 resume 原 backend。
   let ctx;
   try {
-    ctx = resolveContext({
-      model: base.model,
-      client: base.client,
-      effort: base.effort,
-      allowHistorical: true
-    });
+    ctx = resolveContinueContext(base);
   } catch (error) {
     fail(error.message);
   }
@@ -277,6 +285,10 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     model: ctx.model,
     client: ctx.client,
     effort: ctx.effort,
+    provider: ctx.provider,
+    model_id: ctx.modelId,
+    protocol: ctx.protocol,
+    wire_api: ctx.wireApi ?? null,
     thread_key,
     session_id,
     claude_session: currentSessionId(),

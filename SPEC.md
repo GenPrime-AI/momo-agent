@@ -262,6 +262,26 @@ momo-work/
 
 所有 mock 测试必须全绿,才进入真实 key 端到端测试(由主流程在 workflow 之外用真实 GLM key 跑一条 `/momo:work`)。
 
+## 10.5 Session 归属模型与已知边界(平台限制,已查证定稿)
+
+"主 session 关闭即全杀"(§2.2)依赖把 job 归属到正确的 session。归属来源按优先级:
+
+1. **`MOMO_SESSION_ID`(主用,官方机制)** —— SessionStart hook 从 stdin 拿到 `session_id`,写
+   `export MOMO_SESSION_ID=<id>` 进 `$CLAUDE_ENV_FILE`;Claude Code 据此把它注入**本 session**后续
+   所有命令子进程的环境。这是 Claude Code 官方文档化的 per-session 注入方式(hooks reference),
+   codex 插件生产同款。正常运行下 work 子进程**总能**拿到自己正确的 session id,多 session 并发不串。
+2. **`CLAUDE_SESSION_ID`** —— 留作兼容;但**当前 Claude Code 并未把它设进 Bash 子进程环境**
+   (官方 issue #47018 / #24371 等仍未实现;`${CLAUDE_SESSION_ID}` 仅在命令/skill 提示词文本里可替换,
+   不是 env)。故不可依赖,仅作占位。
+3. **单活跃 session 兜底** —— 上面两者都拿不到时,若**恰好一个**活跃 session(active-sessions 注册表)
+   则归属它(单 session 场景安全)。
+
+**已知边界(无更优解,非 bug):** 仅当 `CLAUDE_ENV_FILE` 注入不可用**且**同时有 ≥2 个活跃 session 时,
+work 子进程无任何官方信号可判断自己属于哪个 session(detached 进程无 session 标识)。此时归属记为 null
+(绝不猜,以免误杀别的 session 的 job)。这类 unowned job 不会泄漏:**最后一个**活跃 session 关闭时由
+SessionEnd 统一清掉(§7)。即:极端退化场景下,清理时机从"原 session 关闭"放宽到"最后一个 session 关闭",
+但绝不误杀、绝不永久泄漏。
+
 ## 11. 不做(明确 out of scope)
 
 - 跨 job 的文件冲突协调 / 合并(调度者负责)。

@@ -177,7 +177,12 @@ export function createRunningJob({
   session_id = null,
   claude_session = null,
   cwd,
-  timeout_ms = DEFAULT_TIMEOUT_MS
+  timeout_ms = DEFAULT_TIMEOUT_MS,
+  // 后端身份(durable):continue 用这些锁定原始 backend,免受 model 别名后续重映射影响。
+  provider = null,
+  model_id = null,
+  protocol = null,
+  wire_api = null
 }) {
   const ts = nowIso();
   const record = {
@@ -187,6 +192,10 @@ export function createRunningJob({
     model,
     client,
     effort,
+    provider,
+    model_id,
+    protocol,
+    wire_api,
     thread_key,
     session_id,
     claude_session,

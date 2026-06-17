@@ -80,6 +80,58 @@ function isExecutable(p) {
   }
 }
 
+// /momo:continue 专用:用 job 持久化的**原始后端身份**(provider/model_id/protocol/client/
+// effort/wire_api)重建执行上下文,只把 api_key/base_url 取**当前**值(允许凭证轮换)。
+// 不经 model 别名 → 即便 model 名后来被重指到别的 model_id/provider,老线程仍 resume 到原 backend。
+export function resolveForContinue(config, base, opts = {}) {
+  const env = opts.env || process.env;
+  const cwd = base.cwd ? path.resolve(base.cwd) : process.cwd();
+
+  const provider = getProvider(config, base.provider);
+  if (!provider) {
+    throw new ResolveError("provider-missing", `原 job 的 provider "${base.provider}" 已不存在,无法续接。`);
+  }
+  const adapter = getClient(base.client);
+  if (!adapter) {
+    throw new ResolveError("client-invalid", `原 job 的 client "${base.client}" 不可用。`);
+  }
+  const protocol = base.protocol ?? adapter.protocol;
+  if (!Array.isArray(provider.protocols) || !provider.protocols.includes(protocol)) {
+    throw new ResolveError("protocol-incompatible", `provider "${base.provider}" 不再支持协议 "${protocol}",无法续接。`);
+  }
+  const binaryPath = resolveBinary(base.client, env);
+  if (!binaryPath) {
+    throw new ResolveError("client-not-installed", `client "${base.client}" 未安装,无法续接。`);
+  }
+  if (base.effort && !adapter.allowedEffort.has(base.effort)) {
+    throw new ResolveError("effort-invalid", `effort "${base.effort}" 对 client "${base.client}" 非法。`);
+  }
+  const baseUrl = provider.base_url && provider.base_url[protocol];
+  if (!baseUrl) {
+    throw new ResolveError("base-url-missing", `provider "${base.provider}" 缺少 ${protocol} 协议的 base_url。`);
+  }
+  if (typeof provider.api_key !== "string" || provider.api_key.trim() === "") {
+    throw new ResolveError("api-key-missing", `provider "${base.provider}" 缺少 api_key。`);
+  }
+
+  return {
+    model: base.model,
+    modelId: base.model_id ?? base.model,
+    provider: base.provider,
+    protocol,
+    client: base.client,
+    adapter,
+    effort: base.effort,
+    baseUrl,
+    apiKey: provider.api_key,
+    binaryPath,
+    cwd,
+    threadKey: base.thread_key ?? threadKey(cwd, base.model, base.client),
+    wireApi: base.wire_api ?? null,
+    timeoutMs: Number.isFinite(base.timeout_ms) ? base.timeout_ms : null
+  };
+}
+
 // Main entry. SPEC §8 ordered fail-fast.
 //   opts = { model, client?, effort?, taskPrompt?, cwd?, env? }
 // taskPrompt is validated here (§8.7) when provided; resolve is also usable for
@@ -117,13 +169,7 @@ export function resolve(config, opts = {}) {
   let client = opts.client;
   if (client) {
     const check = clientValidForModel(config, model, client);
-    // historical(/momo:continue):允许 client 不在 model **当前** clients 列表里,只要它仍是
-    // 已知 client 且协议与 provider 兼容 —— 否则用户改了 model 配置就无法 resume 老线程。
-    const adapterC = getClient(client);
-    const protoOk =
-      adapterC && Array.isArray(provider.protocols) && provider.protocols.includes(adapterC.protocol);
-    const okHistorical = opts.allowHistorical && check.reason === "not-in-model-clients" && protoOk;
-    if (!check.ok && !okHistorical) {
+    if (!check.ok) {
       const avail = compatibleClients(config, model);
       let why;
       if (check.reason === "not-in-model-clients") {
@@ -175,10 +221,7 @@ export function resolve(config, opts = {}) {
   if (effort) {
     const inModel = Array.isArray(modelDef.effort) && modelDef.effort.includes(effort);
     const legalForClient = adapter.allowedEffort.has(effort);
-    // historical(/momo:continue):effort 不在 model **当前** effort 列表也行,只要该 client
-    // 适配器接受它 —— 老线程不因后续配置改动而失效。
-    const okHistorical = opts.allowHistorical && legalForClient;
-    if ((!inModel || !legalForClient) && !okHistorical) {
+    if (!inModel || !legalForClient) {
       const legal = (modelDef.effort || []).filter((e) => adapter.allowedEffort.has(e));
       throw new ResolveError(
         "effort-invalid",
