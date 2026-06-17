@@ -252,7 +252,8 @@ export function createRunningJob({
   provider = null,
   model_id = null,
   protocol = null,
-  wire_api = null
+  wire_api = null,
+  native = false
 }) {
   const ts = nowIso();
   const record = {
@@ -269,6 +270,7 @@ export function createRunningJob({
     model_id,
     protocol,
     wire_api,
+    native,
     thread_key,
     session_id,
     claude_session,

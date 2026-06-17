@@ -59,9 +59,10 @@ import {
   providerForModel,
   defaultClient,
   defaultEffortForClient,
-  compatibleClients
+  compatibleClients,
+  isNative
 } from "./lib/registry.mjs";
-import { resolve as resolveExecContext, resolveForContinue } from "./lib/resolve.mjs";
+import { resolve as resolveExecContext, resolveForContinue, resolveBinary } from "./lib/resolve.mjs";
 import { getClient } from "./lib/clients/index.mjs";
 
 // Augment resolve()'s execution context into the shape the runtime expects (add timeoutMs).
@@ -92,6 +93,21 @@ function resolveModelView(modelName) {
   const model = getModel(config, modelName);
   if (!model) {
     return { model: modelName, provider: "?", protocols: [], clients: [], effort: [] };
+  }
+  if (isNative(model)) {
+    const dClient = defaultClient(model);
+    const adapter = dClient ? getClient(dClient) : null;
+    return {
+      model: modelName,
+      provider: "native", // auth inherited from the client (subscription / ambient), no provider
+      protocols: adapter ? [adapter.protocol] : [],
+      clients: Array.isArray(model.clients) ? model.clients : [],
+      defaultClient: dClient,
+      effort: Array.isArray(model.effort) ? model.effort : [],
+      defaultEffort: null, // native never forces a default effort
+      compatibleClients: Array.isArray(model.clients) ? model.clients : [],
+      native: true
+    };
   }
   const prov = providerForModel(config, modelName);
   const dClient = defaultClient(model);
@@ -259,6 +275,7 @@ async function cmdRun(argv) {
       apiKey: ctx.apiKey,
       effort: ctx.effort,
       wireApi: ctx.wireApi ?? null,
+      native: ctx.native ?? false,
       sessionId: randomUUID(),
       resume: false
     });
@@ -439,6 +456,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
     model_id: ctx.modelId,
     protocol: ctx.protocol,
     wire_api: ctx.wireApi ?? null,
+    native: ctx.native ?? false,
     thread_key,
     session_id,
     claude_session: currentSessionId(),
@@ -455,6 +473,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
       baseUrl: ctx.baseUrl,
       effort: ctx.effort,
       wireApi: ctx.wireApi ?? null,
+      native: ctx.native ?? false,
       task,
       resume,
       resume_from,
@@ -468,7 +487,8 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
   try {
     pid = spawnDetached(process.execPath, [SELF, "__run-job", id], {
       cwd,
-      env: { ...process.env, ...(ctx.apiKey ? { MOMO_JOB_API_KEY: ctx.apiKey } : {}) },
+      // Native jobs have no key (auth is inherited by the client); only pass MOMO_JOB_API_KEY for the proxy path.
+      env: ctx.apiKey ? { ...process.env, MOMO_JOB_API_KEY: ctx.apiKey } : { ...process.env },
       logFile: jobLogFile(id)
     });
   } catch (error) {
@@ -565,6 +585,7 @@ async function runUnderThreadLock(id, job, exec, client) {
       apiKey: process.env.MOMO_JOB_API_KEY ?? exec.apiKey, // key comes from env, not the job file
       effort: exec.effort,
       wireApi: exec.wireApi ?? null,
+      native: exec.native ?? false,
       sessionId: exec.session_id,
       resume: exec.resume
     });
@@ -745,11 +766,19 @@ function mapClientError(base, stderr) {
 }
 
 // ——— status ———
+const STATUS_PAGE_SIZE = 10;
+
 function cmdStatus(argv) {
-  const reference = argv[0];
-  if (!reference) {
-    const jobs = listJobs().map((j) => assessJob(j));
-    process.stdout.write(`${renderStatusList(jobs)}\n`);
+  const reference = (argv[0] ?? "").trim();
+  // Bare (no arg) or a plain page number → paginated list, newest first, 10 per page.
+  // A bare integer is unambiguous: job ids always carry a model prefix (e.g. glm-5.1-ab12cd34).
+  if (!reference || /^\d+$/.test(reference)) {
+    const page = reference ? Math.max(1, parseInt(reference, 10)) : 1;
+    const all = listJobs(); // already sorted newest-first
+    const start = (page - 1) * STATUS_PAGE_SIZE;
+    const slice = all.slice(start, start + STATUS_PAGE_SIZE).map((j) => assessJob(j));
+    const meta = { page, pageSize: STATUS_PAGE_SIZE, total: all.length };
+    process.stdout.write(`${renderStatusList(slice, meta)}\n`);
     return;
   }
   let job;
@@ -819,7 +848,10 @@ function cmdList() {
   let models;
   try {
     const config = loadConfig();
-    models = listModelNames(config).map((name) => resolveModelView(name));
+    models = listModelNames(config)
+      .map((name) => resolveModelView(name))
+      // Native models only show when their client is actually installed (e.g. codex appears only if `codex` is on PATH).
+      .filter((m) => !m.native || (m.defaultClient && resolveBinary(m.defaultClient)));
   } catch (error) {
     fail(error.message);
   }
