@@ -36,25 +36,33 @@ Codex etc. are present.
 
 ### 1) Delegate work
 
-**Default to foreground mode (`run`).** Unless the request clearly needs momo-managed jobs (see the
-exception below), delegate with `run` — it rides Claude Code's own background, so it's non-blocking and
-auto-notified, which is what users expect for "delegate this and tell me when it's done." Make ONE Bash
-call **with `run_in_background: true`**:
+**Default: one independent background shell PER task.** Delegate with `run`, making **one** Bash call
+**per task** with `run_in_background: true`. Each task is its own shell — running independently and
+notifying you with its own result when it finishes (non-blocking, no polling). This is what users
+expect: "delegate this and tell me when it's done."
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" run --model <m> [--client <c>] [--effort <e>] --stdin <<'MOMO_TASK_EOF'
 <the entire task text, verbatim>
 MOMO_TASK_EOF
 ```
-Do NOT poll; relay the model's stdout to the user when the task-notification arrives.
 
-**Use `work` (momo-managed detached jobs) ONLY when the request explicitly calls for it** — i.e. it
-asks to fan out several tasks in parallel, needs to `cancel`/`continue` a job, or wants jobs to survive
-across sessions (cues like "as a job", "fan out", "in parallel", "并行", "扇出", "批量", "一批多个").
-Forward to the `momo:momo-runner` subagent (one Bash call to `momo.mjs work ... --stdin <<heredoc`),
-which returns a `job-id` immediately; collect later with `result`. **When in doubt, choose `run`.**
+- **One task** → one `momo run` background call.
+- **Several tasks** ("多开几个并行", testing/comparing multiple models, etc.) → fire ONE `momo run`
+  background call **per task**, so the user sees N **independent** background shells. Do NOT merge them
+  into a single command, and do NOT write a foreground poll loop waiting on all of them.
+  - This holds **even when the user wants the results compared or a combined report** — wanting a
+    combined *report* is NOT a request to combine *execution*. Run N independent shells, then aggregate
+    the N results into the report after each has notified.
+  - Collapse into a single command/loop **only** if the user **explicitly** asks to "run it as one
+    command" / "合并到一个命令".
 
-If `--client` / `--effort` aren't specified, omit them (momo uses the model's first configured option).
+When picking `--model`/`--client`/`--effort`: omit `--client`/`--effort` to use the model's defaults.
+
+**Use `work` (momo-managed detached jobs) only when the user explicitly needs momo's job management** —
+to `cancel`/`continue` a job, have jobs survive across sessions, or run a large batch where keeping that
+many live background shells is impractical. Even then, **never foreground-poll**; if you must wait and
+aggregate, run the collection loop itself with `run_in_background`. When in doubt, choose `run`.
 
 ### 2) Query capabilities
 Run `momo.mjs list` and present the configured models, their clients (default `*`) and effort options.
