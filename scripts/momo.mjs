@@ -129,6 +129,10 @@ function parseFormC(argv) {
       throw new Error(`无法识别的位置参数 "${arg}"(任务正文必须放在 -- 之后)`);
     }
     const key = arg.slice(2);
+    if (BOOLEAN_FLAGS.has(key)) {
+      flags[key] = true;
+      continue;
+    }
     const next = flagArgs[i + 1];
     if (next === undefined || next.startsWith("--")) {
       throw new Error(`flag --${key} 缺少取值`);
@@ -139,7 +143,18 @@ function parseFormC(argv) {
   return { flags, task };
 }
 
-const KNOWN_WORK_FLAGS = new Set(["model", "client", "effort"]);
+// 布尔 flag(无取值)。--stdin:任务正文从 stdin 读(配合引号 heredoc,免疫撇号/引号/换行)。
+const BOOLEAN_FLAGS = new Set(["stdin"]);
+const KNOWN_WORK_FLAGS = new Set(["model", "client", "effort", "stdin"]);
+
+// 从 stdin 读任务正文(byte 安全:引号 heredoc 不做任何 shell 展开)。剥掉 heredoc 末尾的换行。
+function readStdinTask() {
+  try {
+    return fs.readFileSync(0, "utf8").replace(/\n$/, "");
+  } catch {
+    return "";
+  }
+}
 
 function assertKnownFlags(flags, allowed) {
   for (const key of Object.keys(flags)) {
@@ -158,7 +173,9 @@ function cmdWork(argv) {
   } catch (error) {
     fail(error.message);
   }
-  const { flags, task } = parsed;
+  const { flags } = parsed;
+  // --stdin:任务从 stdin 读(robust,免 shell 引号问题);否则取 `--` 之后的正文。
+  const task = flags.stdin ? readStdinTask() : parsed.task;
 
   // §8 校验顺序由 resolveContext(协议层)负责 fail-fast,抛错带可用项。
   let ctx;
@@ -198,11 +215,16 @@ function cmdWork(argv) {
 
 // ——— continue:复用 (thread_key, session_id) 起新后台 job,同线程串行 ———
 function cmdContinue(argv) {
-  // 形态:continue <job-id> -- <追加指令>
+  // 形态:continue <job-id> -- <追加指令>  或  continue <job-id> --stdin (正文走 stdin)
   const dashDashIdx = argv.indexOf("--");
   const head = dashDashIdx === -1 ? argv : argv.slice(0, dashDashIdx);
-  const task = dashDashIdx === -1 ? null : argv.slice(dashDashIdx + 1).join(" ");
-  const reference = head[0];
+  const useStdin = head.includes("--stdin");
+  const reference = head.find((a) => !a.startsWith("--"));
+  const task = useStdin
+    ? readStdinTask()
+    : dashDashIdx === -1
+      ? null
+      : argv.slice(dashDashIdx + 1).join(" ");
 
   if (!reference) {
     fail("用法:/momo:continue <job-id> -- <追加指令>");

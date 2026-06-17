@@ -109,7 +109,10 @@ test("P2: SessionStart registers an active session; sole active session tags new
     });
     assert.equal(r.status, 0, r.stderr);
     const af = path.join(h.momoHome, "active-sessions.json");
-    assert.deepEqual(JSON.parse(fs.readFileSync(af, "utf8")), ["sess-ONE"]);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(af, "utf8")).map((e) => e.id),
+      ["sess-ONE"]
+    );
 
     // work has no CLAUDE_SESSION_ID env -> falls back to the sole active session.
     const w = runMomo(["work", "--model", "glm-5.2", "--", "x"], {
@@ -363,6 +366,48 @@ test("P2: provider api key is never serialized into the job file", async () => {
     assert.equal(job._exec?.apiKey, undefined, "_exec must not carry the api key");
 
     runMomo(["cancel", id], { home: h.home });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P2: task via --stdin preserves apostrophes/quotes/newlines byte-for-byte", async () => {
+  const h = setup();
+  try {
+    const touch = path.join(h.momoHome, "task.txt");
+    const task = "don't `rm` \"x\" $VAR\n  keep   indent\nline3";
+    const r = runMomo(["work", "--model", "glm-5.2", "--stdin"], {
+      home: h.home,
+      env: { MOCK_TOUCH: touch },
+      input: task + "\n", // heredoc adds a trailing newline; momo strips exactly one
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const id = r.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, id, (j) => j.status === "done");
+    const got = fs.readFileSync(touch, "utf8");
+    // mock writes "claude <session-id> <prompt>\n"; the prompt must contain our task verbatim.
+    assert.ok(got.includes(task), `stdin task must reach the client unchanged; got: ${JSON.stringify(got)}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P1: active-sessions self-heals stale entries (TTL), so lastSession is reachable", () => {
+  const h = setup();
+  try {
+    const af = path.join(h.momoHome, "active-sessions.json");
+    // two stale entries (older than the 48h TTL) that nobody removed
+    const old = new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString();
+    fs.writeFileSync(af, JSON.stringify([{ id: "stale-A", at: old }, { id: "stale-B", at: old }]));
+
+    // a fresh SessionStart should prune the stale ones while adding its own
+    const r = runCleanup(["SessionStart"], {
+      home: h.home,
+      input: JSON.stringify({ session_id: "fresh-1" }),
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const ids = JSON.parse(fs.readFileSync(af, "utf8")).map((e) => e.id);
+    assert.deepEqual(ids, ["fresh-1"], "stale entries pruned; only the fresh one remains");
   } finally {
     h.cleanup();
   }

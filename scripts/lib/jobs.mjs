@@ -45,37 +45,63 @@ export function ensureJobsDir() {
 // session id(平台不注入 env),work 记录 claude_session 时只在**恰好一个活跃 session**
 // 时才归属它(单 session 安全);多个活跃 session 时不猜(返回 null),避免归错 session
 // 而被另一个 SessionEnd 误杀。RMW 在锁内做,防并发 Start/End 竞争。
-function readActiveSessions() {
+// 条目格式 { id, at(ISO) }。带 TTL 自愈:过期项在每次写入与读取时被剔除 —— 即便某个
+// SessionEnd 没能移除自己(如退化路径下 stdin 无 id),陈旧条目也不会永久堆积、卡住 lastSession。
+const ACTIVE_SESSION_TTL_MS = 48 * 60 * 60 * 1000;
+
+function readRawActiveSessions() {
   try {
     const arr = JSON.parse(fs.readFileSync(ACTIVE_SESSIONS_FILE, "utf8"));
-    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string" && s) : [];
+    return Array.isArray(arr) ? arr : [];
   } catch {
     return [];
   }
 }
 
-function writeActiveSessions(list) {
+function freshEntries(raw, now) {
+  return raw.filter(
+    (e) =>
+      e &&
+      typeof e.id === "string" &&
+      e.id &&
+      Number.isFinite(Date.parse(e.at)) &&
+      now - Date.parse(e.at) < ACTIVE_SESSION_TTL_MS
+  );
+}
+
+function writeRawActiveSessions(list) {
   fs.mkdirSync(MOMO_HOME, { recursive: true });
   const tmp = `${ACTIVE_SESSIONS_FILE}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify([...new Set(list)]), "utf8");
+  fs.writeFileSync(tmp, JSON.stringify(list), "utf8");
   fs.renameSync(tmp, ACTIVE_SESSIONS_FILE);
+}
+
+function activeIds(now = Date.now()) {
+  return freshEntries(readRawActiveSessions(), now).map((e) => e.id);
 }
 
 export function addActiveSession(sessionId) {
   if (!sessionId) return;
-  withLock("active-sessions", () => writeActiveSessions([...readActiveSessions(), sessionId]));
+  withLock("active-sessions", () => {
+    const now = Date.now();
+    const kept = freshEntries(readRawActiveSessions(), now).filter((e) => e.id !== sessionId);
+    kept.push({ id: sessionId, at: new Date(now).toISOString() });
+    writeRawActiveSessions(kept);
+  });
 }
 
 export function removeActiveSession(sessionId) {
   if (!sessionId) return;
-  withLock("active-sessions", () =>
-    writeActiveSessions(readActiveSessions().filter((s) => s !== sessionId))
-  );
+  withLock("active-sessions", () => {
+    const now = Date.now();
+    const kept = freshEntries(readRawActiveSessions(), now).filter((e) => e.id !== sessionId);
+    writeRawActiveSessions(kept);
+  });
 }
 
 // 恰好一个活跃 session → 返回它;否则 null(0 个或并发多个都不猜)。
 export function soleActiveSession() {
-  const active = readActiveSessions();
+  const active = activeIds();
   return active.length === 1 ? active[0] : null;
 }
 
@@ -340,9 +366,9 @@ export function listRunningUnowned() {
   return listJobs().filter((j) => isActive(j.status) && !j.claude_session);
 }
 
-// 当前活跃 session 列表(SessionEnd 判断"是否最后一个"用)。
+// 当前活跃 session 列表(SessionEnd 判断"是否最后一个"用),已按 TTL 自愈过滤。
 export function activeSessions() {
-  return readActiveSessions();
+  return activeIds();
 }
 
 export { MOMO_HOME, JOBS_DIR };
