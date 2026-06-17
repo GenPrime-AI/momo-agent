@@ -79,6 +79,12 @@ export function writeConfigFile(momoHome, config) {
 export function childEnv(home, extra = {}) {
   const env = { ...process.env };
   delete env.MOMO_HOME;
+  // Hermetic: strip session env that an active momo plugin (its SessionStart hook) may have injected
+  // into the ambient environment, so session-ownership tests aren't polluted by the real session.
+  // Tests set these explicitly via `extra` when a case needs them.
+  delete env.MOMO_SESSION_ID;
+  delete env.CLAUDE_SESSION_ID;
+  delete env.CLAUDE_ENV_FILE;
   env.HOME = home;
   env.PATH = `${MOCK_BIN}${path.delimiter}${process.env.PATH || ""}`;
   return { ...env, ...extra };
