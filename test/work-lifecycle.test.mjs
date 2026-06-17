@@ -129,6 +129,25 @@ test("netfail stderr maps to a connectivity-friendly error", async () => {
   }
 });
 
+test("chatonly stderr (codex on a Chat-Completions-only endpoint) maps to an actionable error", async () => {
+  const h = setup();
+  try {
+    const r = runMomo(["work", "--model", "gpt-5-codex", "--", "x"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "chatonly" },
+    });
+    const id = parseJobId(r.stdout);
+    const job = await waitForJob(h.momoHome, id, (j) => j.status !== "running" && j.status !== "queued");
+    assert.equal(job.status, "failed");
+    // Must name the real cause (Chat-Completions-only / Responses API) and point to the anthropic client,
+    // not just echo codex's cryptic "missing field `models`".
+    assert.match(job.error, /Chat.?Completions|Responses API/i);
+    assert.match(job.error, /anthropic|claude/i);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("hard crash: child SIGKILLed, no terminal state written -> status assessed as crashed", async () => {
   const h = setup();
   try {

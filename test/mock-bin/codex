@@ -102,6 +102,16 @@ switch (behavior) {
     process.stderr.write("error: ECONNREFUSED ETIMEDOUT network unreachable\n");
     process.exit(1);
     break;
+  case "chatonly":
+    // Real signature codex >=0.139 emits when pointed at a Chat-Completions-only
+    // OpenAI endpoint (no /responses route, e.g. api.xiaomimimo.com/v1).
+    process.stderr.write(
+      "ERROR codex_models_manager::manager: failed to refresh available models: " +
+      "stream disconnected before completion: failed to decode models response: " +
+      "missing field `models`\n"
+    );
+    process.exit(1);
+    break;
   case "hardcrash":
     sleepForever(true);
     break;

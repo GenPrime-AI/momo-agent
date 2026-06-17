@@ -733,6 +733,13 @@ function mapClientError(base, stderr) {
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network|getaddrinfo/i.test(text)) {
     return `${base}: network error (check base_url / connectivity)`;
   }
+  // codex >=0.139 only speaks the Responses API. Pointed at a Chat-Completions-only OpenAI endpoint
+  // (no /responses route, e.g. api.xiaomimimo.com/v1) it fails to load wire_api="chat" or to refresh
+  // its model list. Surface the real cause + the working alternative instead of codex's cryptic output.
+  if (/failed to refresh available models|missing field `models`|wire_api = "chat"/i.test(text) ||
+      (/\b404\b/.test(text) && /\/responses\b/.test(text))) {
+    return `${base}: codex could not drive this OpenAI endpoint — it appears to be Chat-Completions-only (no Responses API), but codex >=0.139 requires the Responses API. Use the provider's anthropic protocol via the "claude" client for this model.`;
+  }
   const tail = text ? `: ${text.split("\n").slice(-3).join(" ").slice(0, 400)}` : "";
   return `${base}${tail}`;
 }
