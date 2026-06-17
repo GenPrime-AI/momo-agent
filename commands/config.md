@@ -3,52 +3,38 @@ description: Configure momo providers / models / api keys / base urls / effort l
 allowed-tools: Bash(node:*), AskUserQuestion
 ---
 
-This command takes NO arguments. The user just ran `/momo:config` — they have not yet said what to configure.
+This command takes no arguments — the user just ran `/momo:config` and hasn't said what to configure yet. You configure momo's `~/.momo/config.json`: the runtime doesn't parse natural language, so you turn what the user says into a structured JSON patch, confirm it, then persist it by calling the runtime.
 
-You are configuring momo's `~/.momo/config.json`. The momo runtime does NOT parse natural language; YOU (the LLM) turn what the user says into a structured JSON patch, confirm it, then persist it by calling the runtime.
+Start by asking what they want to set, with concrete options: add or edit a provider (its base_url per protocol + api key); add or edit a model (its provider, the model_id passed to the client, which clients can drive it, and — only if that model supports it — an effort list); or set a model's default client / effort ordering. Use `AskUserQuestion` for the high-level choice if it helps, then collect the specifics in conversation. Don't assume — if a needed field is missing (a protocol's base_url, the api key, the provider a model belongs to), ask for it.
 
-Follow this flow:
+Turn the answer into the config-set patch shape (it mirrors `~/.momo/config.json`; include only the keys being set — a partial patch is fine):
 
-1. ASK FIRST. The user gave you nothing to act on. Ask them what they want to configure. Make the options concrete, for example:
-   - add or edit a provider (endpoint base_url per protocol + api key)
-   - add or edit a model (which provider, the model_id passed to the client, which clients can drive it, the effort preference list)
-   - set the default client / effort ordering for a model
-   You may use `AskUserQuestion` for the high-level choice, then collect the specifics in plain conversation. Do not assume — if a needed field (e.g. base_url for a protocol, the api key, the provider a model belongs to) is missing, ask for it.
+```jsonc
+{
+  "providers": {
+    "<name>": {
+      "protocols": ["anthropic", "openai"],
+      "base_url": { "anthropic": "https://...", "openai": "https://..." },
+      "api_key": "<plaintext>"
+    }
+  },
+  "models": {
+    "<name>": {
+      "provider": "<provider-name>",
+      "model_id": "<id passed to the client>",
+      "clients": ["claude", "codex"],
+      "effort":  ["high", "medium", "low"]
+    }
+  }
+}
+```
 
-2. PARSE to structured JSON. Translate the user's natural-language answer into the config-set patch shape. The shape mirrors `~/.momo/config.json`:
+`clients` and `effort` are ordered — the first entry is the default. `effort` is optional; include it only for models that actually support effort levels. Known clients are `claude` (anthropic protocol) and `codex` (openai protocol), and a model's clients must be drivable by its provider's protocols.
 
-   ```jsonc
-   {
-     "providers": {
-       "<name>": {
-         "protocols": ["anthropic", "openai"],
-         "base_url": { "anthropic": "https://...", "openai": "https://..." },
-         "api_key": "<plaintext>"
-       }
-     },
-     "models": {
-       "<name>": {
-         "provider": "<provider-name>",
-         "model_id": "<id passed to the client>",
-         "clients": ["claude", "codex"],
-         "effort":  ["high", "medium", "low"]
-       }
-     }
-   }
-   ```
+Echo back a readable summary of exactly what will be written and get an explicit yes before writing. If the patch would overwrite a value that already exists, call that out and confirm the overwrite first — to see what's already there, run `momo.mjs list`. Then persist:
 
-   Only include the keys the user is actually setting (a partial patch is fine). `clients` and `effort` are ORDERED — the first entry is the default. Known clients are `claude` (speaks the anthropic protocol) and `codex` (speaks the openai protocol). A model's `clients` must be drivable given its provider's protocols.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" config-set --json '<structured JSON>'
+```
 
-3. ECHO BACK and confirm. Show the user a readable summary of exactly what will be written (provider names, model names, which fields, masking nothing the user typed but you may shorten the api key for display). Get an explicit yes before writing.
-
-4. CONFIRM OVERWRITES. If the patch would overwrite a provider key, model key, or any existing field that already has a value in the current config, call it out explicitly and ask the user to confirm the overwrite BEFORE persisting. To see what already exists, you may run `node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" list`. Do not silently clobber existing config.
-
-5. PERSIST. Once confirmed, run exactly:
-
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" config-set --json '<structured JSON>'
-   ```
-
-   The runtime validates (provider protocols legal, base_url matches each protocol, model.provider exists, model.clients are known and protocol-compatible, each effort item legal for at least one client) and atomically writes the file. If it rejects the patch, relay the error to the user and fix the structured JSON — do not retry blindly.
-
-Do not run `config-set` until the user has confirmed both the parsed structure and any overwrites. Show the runtime's success/error output to the user when done.
+The runtime validates the patch (provider protocols legal, base_url matches each protocol, model.provider exists, clients known and protocol-compatible, each effort item legal for at least one client) and atomically writes the file. If it rejects the patch, relay the error and fix the JSON rather than retrying blindly. Show the runtime's success or error output to the user when done.
