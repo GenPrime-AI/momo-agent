@@ -15,8 +15,10 @@ import {
   assessJob,
   createRunningJob,
   DEFAULT_TIMEOUT_MS,
+  earlierActiveOnThread,
   finalizeJob,
   generateJobId,
+  nextSeq,
   heartbeat,
   HEARTBEAT_INTERVAL_MS,
   isActive,
@@ -111,6 +113,8 @@ function fail(message, code = 1) {
   process.stderr.write(`momo: ${message}\n`);
   process.exit(code);
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ——— form C 参数解析:全 flag,任务正文在 `--` 之后 ———
 // 返回 { flags: {model,client,effort,...}, task: string|null }
@@ -292,18 +296,22 @@ function cmdContinue(argv) {
     cwd: base.cwd,
     thread_key: base.thread_key,
     session_id: base.session_id,
-    resume: true
+    resume: true,
+    resume_from: base.id
   });
 
   process.stdout.write(`${renderWorkAccepted(readJob(id))}\n`);
 }
 
 // 落 job 记录 + 派生 detached __run-job 进程。
-function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume }) {
+function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume, resume_from = null }) {
+  // 提交序号(全局单调):同线程 FIFO 据此保持"先提交先执行"。
+  const seq = nextSeq();
   // job 记录里附带执行参数,供 __run-job 读取(子进程看不到主对话,正文自带上下文)。
   const record = createRunningJob({
     id,
     pid: 0, // 占位,__run-job 启动后回填自身 pid
+    seq,
     model: ctx.model,
     client: ctx.client,
     effort: ctx.effort,
@@ -328,6 +336,7 @@ function startBackgroundJob({ id, ctx, task, cwd, thread_key, session_id, resume
       wireApi: ctx.wireApi ?? null,
       task,
       resume,
+      resume_from,
       session_id,
       thread_key,
       timeout_ms: ctx.timeoutMs
@@ -376,15 +385,51 @@ async function cmdRunJob(argv) {
 // 在 thread_key 锁保护下执行整个 client run(含心跳 + 超时兜底)。
 // 同 thread_key 的并发 continue 在此排队,避免线程历史写坏(SPEC §4.3)。
 async function runUnderThreadLock(id, job, exec, client) {
-  // 排队等同线程锁的时长必须 ≥ 前面 base 任务的最大运行时(其 wall-clock 超时),否则排在
-  // 一个合法的长任务后面的 continue 会在 10min 后让 runner 退出、被误判 crashed。取 job 超时
-  // + 1h 缓冲;锁本身有"持有者死则抢占"的兜底,等久也安全。
+  // 锁等待时长 ≥ 前面 base 的最大运行时(wall-clock 超时)+ 1h 缓冲;锁有"持有者死则抢占"兜底。
   const lockWaitMs = Math.max((exec.timeout_ms ?? DEFAULT_TIMEOUT_MS) + 3_600_000, 3_600_000);
-  const releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: lockWaitMs });
 
-  // 进入锁后(可能已在队列里等了很久)才 queued → running,并把 started_at 重置为真正
-  // 开跑时刻 —— 排队期间不计 wall-clock,status 也不会把排队中的 job 误判为卡死/超时。
-  markRunning(id);
+  // ── FIFO + 拿锁后统一校验 ──
+  // 反复抢同线程锁,直到:本 job 仍活动、且同线程没有"更早提交(seq 更小)且未完成"的 job。
+  // 这样即便多个 continue 几乎同时派发、乱序抢到锁,也严格按提交顺序执行(避免线程历史错序)。
+  let releaseThread;
+  for (;;) {
+    releaseThread = acquireLock(threadLockName(exec.thread_key), { timeoutMs: lockWaitMs });
+    const cur = readJob(id);
+    if (!cur || isTerminal(cur.status)) {
+      // 排队期间已被 cancel/cleanup 置终态 → 绝不执行,直接退出(终态吸收的执行边界守卫)。
+      releaseThread();
+      process.exit(0);
+    }
+    if (earlierActiveOnThread(exec.thread_key, job.seq, id)) {
+      releaseThread();
+      await sleep(150);
+      continue;
+    }
+    break;
+  }
+
+  // 轮到本 job:queued → running(重置 started_at 为开跑时刻)。若此刻已终态则不执行 —— markRunning
+  // 是终态吸收的,返回非 running 即说明刚被 cancel/cleanup 抢先,立即退出,绝不 buildInvocation/spawn。
+  const started = markRunning(id);
+  if (!started || started.status !== "running") {
+    releaseThread();
+    process.exit(0);
+  }
+
+  // resume:此刻前驱(FIFO 保证)已结束。要求它真正 done(claude/codex 的会话此时才确定已建立),
+  // 并用其**最终** session_id(而非提交时复制的占位值)。前驱未 done → 会话未建立,拒绝续接。
+  if (exec.resume && exec.resume_from) {
+    const base = readJob(exec.resume_from);
+    if (!base || base.status !== "done") {
+      finalizeJob(id, {
+        status: "failed",
+        error: `原 job ${exec.resume_from} 最终为 ${base ? base.status : "缺失"},会话未成功建立,无法续接。`
+      });
+      releaseThread();
+      process.exit(1);
+    }
+    if (base.session_id) exec.session_id = base.session_id;
+  }
 
   let invocation;
   try {

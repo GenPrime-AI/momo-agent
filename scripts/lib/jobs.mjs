@@ -14,6 +14,7 @@ import { withLock } from "./lock.mjs";
 const MOMO_HOME = process.env.MOMO_HOME || path.join(os.homedir(), ".momo");
 const JOBS_DIR = path.join(MOMO_HOME, "jobs");
 const ACTIVE_SESSIONS_FILE = path.join(MOMO_HOME, "active-sessions.json");
+const SEQ_FILE = path.join(MOMO_HOME, "seq");
 
 export const HEARTBEAT_INTERVAL_MS = 5_000; // runner 心跳间隔(≤5s)
 export const HEARTBEAT_STALE_MS = 30_000; // 超此无心跳 → 疑似卡死
@@ -113,6 +114,37 @@ export function jobLogFile(id) {
   return path.join(JOBS_DIR, `${id}.log`);
 }
 
+// 全局单调递增序号(提交顺序)。同线程的 FIFO 排队据此判断"谁更早提交"。锁内 read-inc-write。
+export function nextSeq() {
+  return withLock("seq", () => {
+    let n = 0;
+    try {
+      n = parseInt(fs.readFileSync(SEQ_FILE, "utf8"), 10) || 0;
+    } catch {
+      n = 0;
+    }
+    n += 1;
+    fs.mkdirSync(MOMO_HOME, { recursive: true });
+    const tmp = `${SEQ_FILE}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, String(n), "utf8");
+    fs.renameSync(tmp, SEQ_FILE);
+    return n;
+  });
+}
+
+// 同线程上是否还有"更早提交(seq 更小)且未终态"的 job —— FIFO 判断用。
+export function earlierActiveOnThread(threadKeyVal, seq, selfId) {
+  if (!Number.isFinite(seq)) return false;
+  return listJobs().some(
+    (j) =>
+      j.thread_key === threadKeyVal &&
+      j.id !== selfId &&
+      isActive(j.status) &&
+      Number.isFinite(j.seq) &&
+      j.seq < seq
+  );
+}
+
 // thread_key = sha1(cwd|model|client),用于 resume 与同线程串行锁。
 export function threadKey(cwd, model, client) {
   return createHash("sha1").update(`${cwd}|${model}|${client}`).digest("hex").slice(0, 16);
@@ -204,6 +236,7 @@ export function createRunningJob({
   claude_session = null,
   cwd,
   timeout_ms = DEFAULT_TIMEOUT_MS,
+  seq = null,
   // 后端身份(durable):continue 用这些锁定原始 backend,免受 model 别名后续重映射影响。
   provider = null,
   model_id = null,
@@ -215,6 +248,7 @@ export function createRunningJob({
     id,
     status: "queued",
     pid,
+    seq,
     model,
     client,
     effort,

@@ -413,6 +413,55 @@ test("P1: active-sessions self-heals stale entries (TTL), so lastSession is reac
   }
 });
 
+test("FIFO: same-thread jobs execute in submission order (not lock-race order)", async () => {
+  const h = setup();
+  try {
+    const order = path.join(h.momoHome, "order.txt"); // mock appends the prompt on start
+    const a = runMomo(["work", "--model", "glm-5.2", "--", "AAA"], {
+      home: h.home,
+      env: { MOCK_TOUCH: order, MOCK_DELAY_MS: "300" },
+    });
+    const b = runMomo(["work", "--model", "glm-5.2", "--", "BBB"], {
+      home: h.home,
+      env: { MOCK_TOUCH: order, MOCK_DELAY_MS: "300" },
+    });
+    const idA = a.stdout.match(/job\s+([^\s(]+)/)[1];
+    const idB = b.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, idA, (j) => j.status === "done", { timeoutMs: 12000 });
+    await waitForJob(h.momoHome, idB, (j) => j.status === "done", { timeoutMs: 12000 });
+    const txt = fs.readFileSync(order, "utf8");
+    assert.ok(txt.indexOf("AAA") < txt.indexOf("BBB"), `A must run before B; got: ${JSON.stringify(txt)}`);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("resume re-validation: continue fails if the base never reached 'done'", async () => {
+  const h = setup();
+  try {
+    // claude base that hangs; continue is accepted (claude pins session id) and queues behind it.
+    const base = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const baseId = base.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, baseId, (j) => j.status === "running" && j.pid > 0);
+
+    const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
+    assert.equal(cont.status, 0, cont.stderr);
+    const contId = cont.stdout.match(/job\s+([^\s(]+)/)[1];
+
+    // base is cancelled (ends 'killed', not 'done'); the queued continuation now gets its turn
+    // and must refuse to resume a session that was never established.
+    runMomo(["cancel", baseId], { home: h.home });
+    const job = await waitForJob(h.momoHome, contId, (j) => j.status === "failed", { timeoutMs: 8000 });
+    assert.equal(job.status, "failed");
+    assert.match(job.error || "", /会话未成功建立|无法续接/);
+  } finally {
+    h.cleanup();
+  }
+});
+
 function setup() {
   const h = makeHome();
   writeConfigFile(h.momoHome, sampleConfig());
