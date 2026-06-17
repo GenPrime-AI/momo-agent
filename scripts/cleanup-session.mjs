@@ -2,6 +2,7 @@
 // SessionEnd hook:主 session 结束时,杀掉本 session 派生的所有 running momo job 进程树。
 // 不留孤儿(SPEC §2.2)。主 session id 从 hook stdin JSON 或环境变量取。
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 import {
   finalizeJob,
@@ -79,8 +80,10 @@ async function main() {
 }
 
 // 仅作为脚本直接运行时执行 main(被 import 时只导出 cleanupSession)。
+// 用 pathToFileURL 正确转义路径(含空格/特殊字符的安装目录也能匹配),
+// 否则裸 `file://${argv[1]}` 在带空格的插件路径下永不相等 → hook 静默失效。
 const isDirectRun =
-  process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isDirectRun) {
   main().catch((error) => {
     process.stderr.write(`momo cleanup error: ${error?.message ?? error}\n`);

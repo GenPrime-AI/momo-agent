@@ -212,7 +212,15 @@ export function resolve(config, opts = {}) {
   // 缺省让适配器决定(codex 默认 chat)。
   const wireApi = modelDef.wire_api ?? provider.wire_api ?? null;
 
+  // 可选 per-model/provider 超时(毫秒)。缺省返回 null,由上层兜到 DEFAULT_TIMEOUT_MS。
+  const timeoutMs = Number.isFinite(modelDef.timeout_ms)
+    ? modelDef.timeout_ms
+    : Number.isFinite(provider.timeout_ms)
+      ? provider.timeout_ms
+      : null;
+
   return {
+    timeoutMs,
     model,
     modelId: modelDef.model_id,
     provider: providerName,

@@ -16,6 +16,7 @@ import {
   runCleanup,
   jobsDir,
   readJobFile,
+  waitForJob,
 } from "./helpers.mjs";
 
 function alive(pid) {
@@ -110,6 +111,49 @@ test("P2: SessionStart hook persists the main session id to ~/.momo/current-sess
     const p = path.join(h.momoHome, "current-session");
     assert.ok(fs.existsSync(p), "current-session file must be written");
     assert.equal(fs.readFileSync(p, "utf8").trim(), "sess-PERSIST-123");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P2: per-model timeout_ms in config is honoured (not the 600s default)", async () => {
+  const h = makeHome();
+  try {
+    const cfg = sampleConfig();
+    cfg.models["glm-5.2"].timeout_ms = 1200; // tiny, config-driven
+    writeConfigFile(h.momoHome, cfg);
+
+    // hang forever; only the config timeout can end it (no MOMO_TIMEOUT_MS env).
+    const r = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const id = r.stdout.match(/job\s+([^\s(]+)/)[1];
+
+    // Must flip to timeout well within a few seconds (proving ~1.2s config, not 600s).
+    const job = await waitForJob(h.momoHome, id, (j) => j.status === "timeout", { timeoutMs: 6000 });
+    assert.equal(job.status, "timeout", "config timeout_ms must drive the wall-clock kill");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("P2: continue is rejected while the base job is still running", async () => {
+  const h = setup();
+  try {
+    const base = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const baseId = base.stdout.match(/job\s+([^\s(]+)/)[1];
+    await waitForJob(h.momoHome, baseId, (j) => j.status === "running" && j.pid > 0);
+
+    const cont = runMomo(["continue", baseId, "--", "more"], { home: h.home });
+    assert.notEqual(cont.status, 0, "must refuse to continue a non-done job");
+    assert.match(cont.stderr, /只能 continue 已完成|done/);
+
+    runMomo(["cancel", baseId], { home: h.home }); // clean up the hang
   } finally {
     h.cleanup();
   }

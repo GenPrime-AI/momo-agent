@@ -207,6 +207,15 @@ function cmdContinue(argv) {
   if (client.supportsResume === false) {
     fail(`client "${base.client}" 暂不支持 continue/resume`);
   }
+  // 只能续接已完成(done)的 job:对 codex 这类 client,可 resume 的真实会话 id 是在
+  // 任务完成、解析子进程输出后才回填的;若原 job 仍在跑或异常终止,session_id 还是
+  // 占位 UUID,续接会接到错误/不存在的线程。
+  if (base.status !== "done") {
+    fail(
+      `job ${base.id} 当前是 "${base.status}",只能 continue 已完成(done)的 job。` +
+        `请用 /momo:status 等它完成后再续接。`
+    );
+  }
   if (!base.session_id) {
     fail(`job ${base.id} 没有可 resume 的 session_id(原 job 可能未成功建立会话)`);
   }
