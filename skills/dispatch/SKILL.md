@@ -35,21 +35,24 @@ Codex etc. are present.
 ## Route by intent
 
 ### 1) Delegate work
-Pick the mode by shape of the request:
 
-- **One task, "do it and tell me when done"** → foreground mode, ridden on Claude's background so it's
-  non-blocking and you get auto-notified. Make ONE Bash call **with `run_in_background: true`**:
+**Default to foreground mode (`run`).** Unless the request clearly needs momo-managed jobs (see the
+exception below), delegate with `run` — it rides Claude Code's own background, so it's non-blocking and
+auto-notified, which is what users expect for "delegate this and tell me when it's done." Make ONE Bash
+call **with `run_in_background: true`**:
 
-  ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" run --model <m> [--client <c>] [--effort <e>] --stdin <<'MOMO_TASK_EOF'
-  <the entire task text, verbatim>
-  MOMO_TASK_EOF
-  ```
-  Do NOT poll; relay the model's stdout to the user when the task-notification arrives.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/momo.mjs" run --model <m> [--client <c>] [--effort <e>] --stdin <<'MOMO_TASK_EOF'
+<the entire task text, verbatim>
+MOMO_TASK_EOF
+```
+Do NOT poll; relay the model's stdout to the user when the task-notification arrives.
 
-- **Fan out many, or needs cancel / continue / survive-session** → momo-managed detached jobs. Forward
-  to the `momo:momo-runner` subagent (one Bash call to `momo.mjs work ... --stdin <<heredoc`), which
-  returns a `job-id` immediately. Fire several for parallel work; collect later with `result`.
+**Use `work` (momo-managed detached jobs) ONLY when the request explicitly calls for it** — i.e. it
+asks to fan out several tasks in parallel, needs to `cancel`/`continue` a job, or wants jobs to survive
+across sessions (cues like "as a job", "fan out", "in parallel", "并行", "扇出", "批量", "一批多个").
+Forward to the `momo:momo-runner` subagent (one Bash call to `momo.mjs work ... --stdin <<heredoc`),
+which returns a `job-id` immediately; collect later with `result`. **When in doubt, choose `run`.**
 
 If `--client` / `--effort` aren't specified, omit them (momo uses the model's first configured option).
 

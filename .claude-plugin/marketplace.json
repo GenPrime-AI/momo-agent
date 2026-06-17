@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "momo — delegate work to any vendor / any CLI client's model in the background.",
-    "version": "1.0.1"
+    "version": "1.0.2"
   },
   "plugins": [
     {
       "name": "momo",
       "description": "Delegate a chunk of work to any vendor / any CLI client's model, run it in the background, and fetch the result back.",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": { "name": "GenPrime-AI" },
       "source": "."
     }
