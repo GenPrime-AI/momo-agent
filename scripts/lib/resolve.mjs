@@ -1,5 +1,5 @@
 // resolve.mjs — (model, client?, effort?) → full execution context.
-// Contains ALL SPEC §8 fail-fast validation. Every error lists the available
+// Contains ALL the ordered fail-fast validation. Every error lists the available
 // options so the caller (and the user) can self-correct.
 //
 // Returned execution context (the contract other modules rely on):
@@ -10,7 +10,7 @@
 //     provider,         // provider name
 //     protocol,         // protocol the chosen client speaks (== adapter.protocol)
 //     client,           // resolved client name
-//     adapter,          // the client adapter object (SPEC §5 interface)
+//     adapter,          // the client adapter object (adapter interface)
 //     effort,           // resolved effort (legal for client)
 //     baseUrl,          // provider.base_url[protocol]
 //     apiKey,           // provider.api_key (plaintext)
@@ -132,7 +132,7 @@ export function resolveForContinue(config, base, opts = {}) {
   };
 }
 
-// Main entry. SPEC §8 ordered fail-fast.
+// Main entry. Ordered fail-fast validation.
 //   opts = { model, client?, effort?, taskPrompt?, cwd?, env? }
 // taskPrompt is validated here (§8.7) when provided; resolve is also usable for
 // `continue`/dry checks by passing a non-empty taskPrompt.

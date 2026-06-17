@@ -3,7 +3,7 @@
 //   work / continue / status / result / cancel / list / config-set / cleanup
 //   __run-job(内部:被 work/continue detached 派生,真正跑 client)
 //
-// 应用层。协议层(resolve/config/registry/clients)按 SPEC §9 路径 import,假定已存在。
+// 应用层。协议层(resolve/config/registry/clients)按既定路径 import,假定已存在。
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -50,7 +50,7 @@ import {
   renderWorkAccepted
 } from "./lib/render.mjs";
 
-// ——— 协议层(adapter 接口约定见 SPEC §5;路径见 §9)———
+// ——— 协议层(adapter 接口约定见各 client 适配器)———
 import { loadConfig, patchConfig } from "./lib/config.mjs";
 import {
   listModels as listModelNames,
@@ -208,7 +208,7 @@ function cmdWork(argv) {
   const cwd = process.cwd();
   const tk = threadKey(cwd, ctx.model, ctx.client);
   const id = generateJobId(ctx.model);
-  // 为新线程钉死一个确定性 session id,供后续 continue/resume(SPEC §5.1)。
+  // 为新线程钉死一个确定性 session id,供后续 continue/resume。
   const sessionId = randomUUID();
 
   startBackgroundJob({
@@ -366,7 +366,7 @@ function cmdContinue(argv) {
   // crashed 并落盘。否则我们会基于陈旧状态接受 continue,排一个注定 resume 失败的 follow-up。
   base = assessJob(base);
 
-  // resume 能力由 client 适配器决定(SPEC §5.2:codex 可能不支持)。
+  // resume 能力由 client 适配器决定(codex 可能不支持)。
   const client = getClient(base.client);
   if (!client) {
     fail(`job ${base.id} 的 client "${base.client}" 不可用`);
@@ -498,7 +498,7 @@ async function cmdRunJob(argv) {
 }
 
 // 在 thread_key 锁保护下执行整个 client run(含心跳 + 超时兜底)。
-// 同 thread_key 的并发 continue 在此排队,避免线程历史写坏(SPEC §4.3)。
+// 同 thread_key 的并发 continue 在此排队,避免线程历史写坏。
 async function runUnderThreadLock(id, job, exec, client) {
   // 锁等待时长 ≥ 前面 base 的最大运行时(wall-clock 超时)+ 1h 缓冲;锁有"持有者死则抢占"兜底。
   const lockWaitMs = Math.max((exec.timeout_ms ?? DEFAULT_TIMEOUT_MS) + 3_600_000, 3_600_000);
@@ -570,7 +570,7 @@ async function runUnderThreadLock(id, job, exec, client) {
     fs.writeFileSync(f.path, f.content, "utf8");
   }
 
-  // env 值为 null = 需 UNSET(SPEC §5:claude 强制 unset ANTHROPIC_AUTH_TOKEN)。
+  // env 值为 null = 需 UNSET(claude 强制 unset ANTHROPIC_AUTH_TOKEN)。
   const childEnv = { ...process.env };
   for (const [k, v] of Object.entries(invocation.env ?? {})) {
     if (v === null) {

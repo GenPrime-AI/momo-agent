@@ -1,6 +1,6 @@
 // config.mjs — read/write ~/.momo/config.json
 // Atomic write (temp file + rename), write lock, refuse-to-overwrite-on-parse-error,
-// structural validation (SPEC §3, §6.1).
+// structural validation.
 //
 // Zero third-party deps. Node built-ins only.
 
@@ -135,7 +135,7 @@ export function saveConfig(config) {
   ensureHome();
   const lp = acquireLock();
   try {
-    // SPEC §3:若磁盘上已有 config 且被手改坏(无法解析),拒绝覆盖、报错保留原文件。
+    // 若磁盘上已有 config 且被手改坏(无法解析),拒绝覆盖、报错保留原文件。
     const cp = configPath();
     if (fs.existsSync(cp)) {
       const raw = fs.readFileSync(cp, "utf8");
@@ -215,7 +215,7 @@ function atomicWrite(target, content) {
 }
 
 // ---------------------------------------------------------------------------
-// Structural validation (SPEC §3, §6.1)
+// Structural validation
 // ---------------------------------------------------------------------------
 
 const KNOWN_CLIENTS = new Set(Object.keys(CLIENTS));

@@ -1,6 +1,6 @@
 // index.mjs — client adapter registry.
 // Adding a new client = drop a `<name>.mjs` adapter here. registry/resolve/runtime
-// never change. Each adapter implements the SPEC §5 unified interface:
+// never change. Each adapter implements the unified interface:
 //   { name, protocol, allowedEffort:Set, buildInvocation, parseResult, extractSessionId }
 
 import claude from "./claude.mjs";

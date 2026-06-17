@@ -1,5 +1,4 @@
 // claude.mjs — client adapter for the `claude` CLI (speaks anthropic protocol).
-// SPEC §5.1.
 //
 // Verified against `claude --help`:
 //   -p / --print, --output-format json, --session-id <uuid>, -r/--resume [value],
@@ -19,7 +18,7 @@ export default {
   // - files: temp config files to drop to disk first (none for claude).
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume }) {
     // --bare:最小模式,跳过调用方的 hooks/插件/CLAUDE.md/skills/settings/MCP —— 委派子进程
-    // 只看到任务正文 + 自己的线程历史(SPEC §2.3),也避免重入 momo 自己的 SessionStart/End 钩子。
+    // 只看到任务正文 + 自己的线程历史,也避免重入 momo 自己的 SessionStart/End 钩子。
     // --dangerously-skip-permissions:委派是 headless 后台,没人点权限弹窗;默认 bypass 让它能自主
     // 在工作目录(建议用隔离 worktree)读写文件、跑工具,否则一遇权限请求就永久卡住。
     const argv = ["-p", "--bare", "--dangerously-skip-permissions", "--output-format", "json"];

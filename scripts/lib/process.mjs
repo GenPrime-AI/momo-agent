@@ -60,7 +60,7 @@ export function aliveAndOurs(pid, token) {
 
 // 杀/偷锁用。POSIX 上 **fail-CLOSED**:必须正向验证(token 匹配)才算 ours,缺失/不匹配不认,
 // 宁可不杀(避免误杀)。Windows 无 token 机制 → 退回裸存活(best-effort)—— 否则 fail-closed 会让
-// 锁可被任意偷、cancel/cleanup 全 no-op。PID 复用强化是 POSIX 专属(见 SPEC 10.5)。
+// 锁可被任意偷、cancel/cleanup 全 no-op。PID 复用强化是 POSIX 专属。
 export function verifiedOurs(pid, token) {
   if (!isAlive(pid)) return false;
   if (process.platform === "win32") return true; // Windows best-effort:无身份原语,退回裸存活

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SessionEnd hook:主 session 结束时,杀掉本 session 派生的所有 running momo job 进程树。
-// 不留孤儿(SPEC §2.2)。主 session id 从 hook stdin JSON 或环境变量取。
+// 不留孤儿。主 session id 从 hook stdin JSON 或环境变量取。
 import fs from "node:fs";
 import process from "node:process";
 import { pathToFileURL } from "node:url";

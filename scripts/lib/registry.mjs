@@ -1,6 +1,6 @@
 // registry.mjs — pure projections over a loaded config.
 // Answers: model → provider → protocol; default client; default effort.
-// SPEC §1, §2.7. No I/O, no validation side effects (validation lives in resolve.mjs).
+// No I/O, no validation side effects (validation lives in resolve.mjs).
 
 import { CLIENTS, getClient, knownClientNames } from "./clients/index.mjs";
 
@@ -23,7 +23,7 @@ export function providerForModel(config, modelName) {
   return getProvider(config, m.provider);
 }
 
-// Default client = first entry in model.clients (SPEC §2.7).
+// Default client = first entry in model.clients.
 export function defaultClient(model) {
   if (!model || !Array.isArray(model.clients) || !model.clients.length) return null;
   return model.clients[0];

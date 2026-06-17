@@ -1,4 +1,4 @@
-// Job 状态层:CRUD + 存活判定(SPEC §4.1)+ 心跳。
+// Job 状态层:CRUD + 存活判定+ 心跳。
 // 每个 job 一个 ~/.momo/jobs/<id>.json 文件 + 同名 .log。
 // job 文件本身就是事实来源(无中央 state.json),避免并发写盘冲突。
 import { createHash, randomBytes } from "node:crypto";
@@ -335,7 +335,7 @@ export function finalizeJob(id, patch = {}) {
   });
 }
 
-// 存活判定(SPEC §4.1)——三招叠加,返回判定后的 view(可能写回 crashed/timeout)。
+// 存活判定——三招叠加,返回判定后的 view(可能写回 crashed/timeout)。
 // 不改 done/failed/killed 等已写好的终态。
 export function assessJob(job, opts = {}) {
   const now = opts.now ?? Date.now();
