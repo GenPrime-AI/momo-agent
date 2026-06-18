@@ -90,6 +90,39 @@ export function resolveForContinue(config, base, opts = {}) {
   const env = opts.env || process.env;
   const cwd = base.cwd ? path.resolve(base.cwd) : process.cwd();
 
+  // Back-compat: jobs created before native moved to the provider layer persisted native:true with
+  // no provider (and no pinned model_id). Rebuild that keyless context directly from the client.
+  if (base.native && !base.provider) {
+    const adapter = getClient(base.client);
+    if (!adapter) {
+      throw new ResolveError("client-invalid", `The original job's client "${base.client}" is unavailable.`);
+    }
+    const binaryPath = resolveBinary(base.client, env);
+    if (!binaryPath) {
+      throw new ResolveError("client-not-installed", `client "${base.client}" is not installed; cannot continue.`);
+    }
+    if (base.effort && !adapter.allowedEffort.has(base.effort)) {
+      throw new ResolveError("effort-invalid", `effort "${base.effort}" is invalid for client "${base.client}".`);
+    }
+    return {
+      model: base.model,
+      modelId: base.model_id ?? null,
+      provider: null,
+      protocol: base.protocol ?? adapter.protocol,
+      client: base.client,
+      adapter,
+      effort: base.effort ?? null,
+      baseUrl: null,
+      apiKey: null,
+      binaryPath,
+      cwd,
+      threadKey: base.thread_key ?? threadKey(cwd, base.model, base.client),
+      wireApi: null,
+      timeoutMs: Number.isFinite(base.timeout_ms) ? base.timeout_ms : null,
+      native: true,
+    };
+  }
+
   const provider = getProvider(config, base.provider);
   if (!provider) {
     throw new ResolveError("provider-missing", `The original job's provider "${base.provider}" no longer exists; cannot continue.`);

@@ -40,6 +40,31 @@ test("config validation: a model may reference a native provider with no key/bas
   assert.ok(validateConfig(bad).some((e) => /base_url|api_key/.test(e)));
 });
 
+test("config validation: a native provider name cannot be shadowed by a config provider", () => {
+  const shadow = {
+    version: 1,
+    providers: { "codex-native": { protocols: ["openai"], base_url: { openai: "https://x" }, api_key: "k" } },
+    models: {},
+  };
+  assert.ok(
+    validateConfig(shadow).some((e) => /reserved built-in native provider/.test(e)),
+    "defining a provider named codex-native must be rejected"
+  );
+});
+
+test("resolveForContinue: legacy native job (native:true, no provider) still resumes keyless", () => {
+  // shape persisted by the pre-rework native-MODEL design
+  const legacy = {
+    model: "codex", model_id: null, provider: null, protocol: "openai",
+    client: "codex", effort: null, native: true, cwd: process.cwd(), thread_key: "tk",
+  };
+  const ctx = resolveForContinue(cfg(), legacy, { env: ENV });
+  assert.equal(ctx.native, true);
+  assert.equal(ctx.baseUrl, null);
+  assert.equal(ctx.apiKey, null);
+  assert.equal(ctx.client, "codex");
+});
+
 test("resolve(native model): no baseUrl/apiKey, model_id pinned, native flag set", () => {
   const a = resolve(cfg(), { model: "gpt-5.5", taskPrompt: "hi", env: ENV });
   assert.equal(a.native, true);

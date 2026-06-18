@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLIENTS } from "./clients/index.mjs";
-import { getNativeProvider } from "./native.mjs";
+import { getNativeProvider, isNativeProviderName } from "./native.mjs";
 
 export const CONFIG_VERSION = 1;
 
@@ -249,6 +249,12 @@ export function validateConfig(config) {
   // ---- providers ----
   for (const [pname, prov] of Object.entries(providers)) {
     const tag = `provider "${pname}"`;
+    // Native provider names are reserved/built-in — a config provider must not shadow them
+    // (doing so would silently turn off keyless auth and start injecting a key/base_url).
+    if (isNativeProviderName(pname)) {
+      errors.push(`${tag} is a reserved built-in native provider name; don't define it in config — reference it from a model instead.`);
+      continue;
+    }
     if (!prov || typeof prov !== "object") {
       errors.push(`${tag} must be an object.`);
       continue;
