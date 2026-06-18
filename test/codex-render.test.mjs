@@ -12,7 +12,7 @@ import {
   waitForJob,
 } from "./helpers.mjs";
 
-import { renderModelList, renderStatusList, renderResult } from "../scripts/lib/render.mjs";
+import { renderModelList, renderStatusList, renderResult, renderNativeProviders } from "../scripts/lib/render.mjs";
 import claude from "../scripts/lib/clients/claude.mjs";
 import codex from "../scripts/lib/clients/codex.mjs";
 
@@ -218,6 +218,18 @@ test("renderModelList marks defaults with *", () => {
   assert.match(out, /claude\*/);
   assert.match(out, /high\*/);
   assert.doesNotMatch(out, /codex\*/);
+});
+
+test("renderNativeProviders: separate detection table; empty when none detected", () => {
+  assert.equal(renderNativeProviders([]), "", "no detected native providers => no table");
+  const out = renderNativeProviders([
+    { provider: "codex-native", protocol: "openai", client: "codex" },
+    { provider: "claude-native", protocol: "anthropic", client: "claude" },
+  ]);
+  assert.match(out, /Native providers/);
+  assert.match(out, /codex-native\s+openai\s+codex/);
+  assert.match(out, /claude-native\s+anthropic\s+claude/);
+  assert.match(out, /\/momo:config/);
 });
 
 test("renderStatusList handles empty input", () => {

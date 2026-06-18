@@ -76,8 +76,14 @@ You don't configure the provider — you just hang **models** on it, each pinnin
 ```
 
 - No key: if you can use `codex` / `claude` yourself, a model on its native provider just works.
-- Models on `codex-native` only show in `/momo:list` when the `codex` CLI is installed.
+- `/momo:list` shows the native providers detected on your machine in a separate table — discovery only; hang a model on one to actually run it.
 - The model id must be one your client accepts (a ChatGPT-account Codex login accepts only that account's models).
+
+**Fastest setup — just ask Claude Code.** In your Claude Code session, say:
+
+> Check whether the `claude` and `codex` CLIs are installed, and if so, configure the native `codex` and `claude` models for me.
+
+Claude will detect the CLIs, pick model ids they accept, and add the models via `/momo:config` — no manual JSON.
 
 > Note: native runs use your own session, so they share its rate limits — fanning out many parallel native jobs can hit them.
 
@@ -141,9 +147,15 @@ gpt-5.5   codex-native  openai     codex*
 gpt-5.4   codex-native  openai     codex*
 
 * = default
+
+Native providers (detected — no key needed):
+PROVIDER       PROTOCOL   CLIENT
+codex-native   openai     codex
+claude-native  anthropic  claude
+Add a model on one with /momo:config (just a model_id, no key) — it then shows in the table above.
 ```
 
-Rows whose provider is `codex-native` / `claude-native` are keyless — auth inherited from the client.
+The first table is your configured models (rows on `codex-native` / `claude-native` are keyless — auth inherited from the client). The second table is the built-in native providers **detected on this machine** (the client is installed) — pure discovery: hang a model on one and it joins the first table.
 
 ### `/momo:run` — delegate, non-blocking, notify me when done
 

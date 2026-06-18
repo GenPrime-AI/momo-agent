@@ -76,8 +76,14 @@ provider 你不配 —— 你只把**模型**挂上去,每个 pin 自己的 `mod
 ```
 
 - 无 key:你自己能用 `codex` / `claude`,挂在其原生 provider 上的模型就能用。
-- 挂在 `codex-native` 上的模型,只有 `codex` CLI 装了才出现在 `/momo:list`。
+- `/momo:list` 会用**单独一张表**列出本机探测到的原生 provider —— 仅作发现;挂个模型上去才能真正跑。
 - model_id 必须是你的 client 接受的(ChatGPT 账号的 Codex 登录只认该账号有权的模型)。
+
+**最快配置 —— 直接让 Claude Code 帮你做。** 在 Claude Code 会话里说:
+
+> 看看是否安装了 `claude` 和 `codex` CLI,有的话帮我把原生 `codex` 和 `claude` 模型配置上。
+
+它会探测 CLI、挑一个能用的 model_id,通过 `/momo:config` 把模型加好 —— 不用手写 JSON。
 
 > 注意:原生运行走的是你自己的会话,因此共享其速率限制 —— 大量并行原生 job 可能撞限流。
 
@@ -141,9 +147,15 @@ gpt-5.5   codex-native  openai     codex*
 gpt-5.4   codex-native  openai     codex*
 
 * = default
+
+Native providers (detected — no key needed):
+PROVIDER       PROTOCOL   CLIENT
+codex-native   openai     codex
+claude-native  anthropic  claude
+Add a model on one with /momo:config (just a model_id, no key) — it then shows in the table above.
 ```
 
-provider 为 `codex-native` / `claude-native` 的行是无 key 的 —— 认证继承自 client。
+第一张表是你配置的模型(provider 为 `codex-native` / `claude-native` 的行无 key,认证继承自 client)。第二张表是**本机探测到**的内置原生 provider(对应 client 已安装)—— 纯发现:挂个模型上去,它就进第一张表。
 
 ### `/momo:run` —— 委派、不阻塞、跑完通知我
 

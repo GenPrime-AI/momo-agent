@@ -44,6 +44,7 @@ import {
 import {
   renderCancel,
   renderModelList,
+  renderNativeProviders,
   renderResult,
   renderStatusList,
   renderStatusOne,
@@ -62,7 +63,8 @@ import {
   isNativeProvider
 } from "./lib/registry.mjs";
 import { resolve as resolveExecContext, resolveForContinue, resolveBinary } from "./lib/resolve.mjs";
-import { getClient } from "./lib/clients/index.mjs";
+import { getClient, clientsForProtocol } from "./lib/clients/index.mjs";
+import { nativeProviderNames, getNativeProvider } from "./lib/native.mjs";
 
 // Augment resolve()'s execution context into the shape the runtime expects (add timeoutMs).
 // There is NO default execution time limit — a delegated agent may legitimately run for hours.
@@ -855,6 +857,24 @@ function cmdList() {
     fail(error.message);
   }
   process.stdout.write(`${renderModelList(models)}\n`);
+
+  // Separate table: built-in native providers detected on this machine (their client is installed).
+  // Purely for discovery — the user hangs a model on one via /momo:config to actually run it.
+  const detected = nativeProviderNames()
+    .map((name) => {
+      // Show a native provider if ANY client that speaks one of its protocols is installed.
+      for (const proto of getNativeProvider(name).protocols || []) {
+        for (const client of clientsForProtocol(proto)) {
+          if (resolveBinary(client)) return { provider: name, protocol: proto, client };
+        }
+      }
+      return null;
+    })
+    .filter(Boolean);
+  const nativeTable = renderNativeProviders(detected);
+  if (nativeTable) {
+    process.stdout.write(`\n${nativeTable}\n`);
+  }
 }
 
 // ——— config-set (validate + atomic write only, no NL parsing) ———
