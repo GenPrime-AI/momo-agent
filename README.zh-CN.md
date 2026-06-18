@@ -148,14 +148,10 @@ gpt-5.4   codex-native  openai     codex*
 
 * = default
 
-Native providers (detected — no key needed):
-PROVIDER       PROTOCOL   CLIENT
-codex-native   openai     codex
-claude-native  anthropic  claude
-Add a model on one with /momo:config (just a model_id, no key) — it then shows in the table above.
+Native providers available (no key needed): claude-native — add a model on one with /momo:config.
 ```
 
-第一张表是你配置的模型(provider 为 `codex-native` / `claude-native` 的行无 key,认证继承自 client)。第二张表是**本机探测到**的内置原生 provider(对应 client 已安装)—— 纯发现:挂个模型上去,它就进第一张表。
+表是你配置的模型(provider 为 `codex-native` / `claude-native` 的行无 key,认证继承自 client)。末尾那行提示只列**本机探测到**(对应 client 已装)、但你**还没挂模型**的原生 provider —— 纯发现;挂个模型上去它就进表、提示里也随之去掉。当探测到的原生 provider 都已配了模型,这行提示就不出现。
 
 ### `/momo:run` —— 委派、不阻塞、跑完通知我
 

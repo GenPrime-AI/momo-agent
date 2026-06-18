@@ -148,14 +148,10 @@ gpt-5.4   codex-native  openai     codex*
 
 * = default
 
-Native providers (detected — no key needed):
-PROVIDER       PROTOCOL   CLIENT
-codex-native   openai     codex
-claude-native  anthropic  claude
-Add a model on one with /momo:config (just a model_id, no key) — it then shows in the table above.
+Native providers available (no key needed): claude-native — add a model on one with /momo:config.
 ```
 
-The first table is your configured models (rows on `codex-native` / `claude-native` are keyless — auth inherited from the client). The second table is the built-in native providers **detected on this machine** (the client is installed) — pure discovery: hang a model on one and it joins the first table.
+The table is your configured models (rows on `codex-native` / `claude-native` are keyless — auth inherited from the client). The trailing one-line hint names any native provider **detected on this machine** (its client is installed) that you haven't put a model on yet — pure discovery; hang a model on one and it joins the table, and the hint drops it. When every detected native provider already has a model, there's no hint line at all.
 
 ### `/momo:run` — delegate, non-blocking, notify me when done
 

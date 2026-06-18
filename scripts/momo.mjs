@@ -858,9 +858,12 @@ function cmdList() {
   }
   process.stdout.write(`${renderModelList(models)}\n`);
 
-  // Separate table: built-in native providers detected on this machine (their client is installed).
-  // Purely for discovery — the user hangs a model on one via /momo:config to actually run it.
+  // Discovery table: built-in native providers detected on this machine (their client is installed)
+  // that you HAVEN'T configured a model on yet. Once a model references one, that model shows in the
+  // table above and the provider drops out of here — so a fully-used setup shows no discovery table.
+  const usedNative = new Set(models.filter((m) => m.native).map((m) => m.provider));
   const detected = nativeProviderNames()
+    .filter((name) => !usedNative.has(name))
     .map((name) => {
       // Show a native provider if ANY client that speaks one of its protocols is installed.
       for (const proto of getNativeProvider(name).protocols || []) {

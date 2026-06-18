@@ -220,16 +220,17 @@ test("renderModelList marks defaults with *", () => {
   assert.doesNotMatch(out, /codex\*/);
 });
 
-test("renderNativeProviders: separate detection table; empty when none detected", () => {
-  assert.equal(renderNativeProviders([]), "", "no detected native providers => no table");
+test("renderNativeProviders: one-line hint (no table); empty when none detected", () => {
+  assert.equal(renderNativeProviders([]), "", "no detected native providers => no hint");
   const out = renderNativeProviders([
     { provider: "codex-native", protocol: "openai", client: "codex" },
     { provider: "claude-native", protocol: "anthropic", client: "claude" },
   ]);
-  assert.match(out, /Native providers/);
-  assert.match(out, /codex-native\s+openai\s+codex/);
-  assert.match(out, /claude-native\s+anthropic\s+claude/);
+  assert.equal(out.split("\n").length, 1, "must be a single line, not a table");
+  assert.match(out, /Native providers available/);
+  assert.match(out, /codex-native, claude-native/);
   assert.match(out, /\/momo:config/);
+  assert.doesNotMatch(out, /PROTOCOL|CLIENT/, "no table headers");
 });
 
 test("renderStatusList handles empty input", () => {

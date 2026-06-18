@@ -36,19 +36,15 @@ export function renderModelList(models) {
   return `${renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows)}\n\n* = default`;
 }
 
-// /momo:list — a separate table of built-in native providers detected on this machine (client installed).
-// They carry no key/endpoint; you hang a model on one via /momo:config to actually run it.
+// /momo:list — a one-line hint of built-in native providers detected on this machine (client installed)
+// that have no model yet. No table — just name them so the user knows they can hang a keyless model on one.
 // providers: [{ provider, protocol, client }]
 export function renderNativeProviders(providers) {
   if (!providers || providers.length === 0) {
     return "";
   }
-  const rows = providers.map((p) => [p.provider, p.protocol, p.client]);
-  return [
-    "Native providers (detected — no key needed):",
-    renderTable(["PROVIDER", "PROTOCOL", "CLIENT"], rows),
-    "Add a model on one with /momo:config (just a model_id, no key) — it then shows in the table above.",
-  ].join("\n");
+  const names = providers.map((p) => p.provider).join(", ");
+  return `Native providers available (no key needed): ${names} — add a model on one with /momo:config.`;
 }
 
 function elapsed(startIso, endIso) {
