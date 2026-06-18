@@ -86,7 +86,11 @@ function steal(dir) {
 export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   ensureRoot();
   const dir = lockDir(name);
-  const deadline = Date.now() + timeoutMs;
+  // A non-finite timeoutMs (Infinity / null) means "wait indefinitely" — no deadline, just keep
+  // polling until the lock is acquired or a dead holder is preempted. (No timer is involved here —
+  // the loop sleeps a fixed POLL_MS — so there's no setTimeout(Infinity) clamping concern.)
+  const hasDeadline = Number.isFinite(timeoutMs);
+  const deadline = hasDeadline ? Date.now() + timeoutMs : Infinity;
 
   for (;;) {
     if (attemptMkdir(dir)) {
@@ -109,7 +113,7 @@ export function acquireLock(name, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       continue;
     }
 
-    if (Date.now() >= deadline) {
+    if (hasDeadline && Date.now() >= deadline) {
       const meta = readLockMeta(dir);
       throw new Error(
         `lock "${name}" busy${meta?.pid ? ` (held by pid ${meta.pid})` : ""}; timed out after ${timeoutMs}ms`
