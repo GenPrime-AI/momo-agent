@@ -31,6 +31,15 @@ claude plugin install momo@momo-agent
 
 Start a new Claude Code session — the `/momo:*` commands (and the `momo` natural-language trigger) become available.
 
+To update to the latest version later:
+
+```bash
+claude plugin marketplace update momo-agent   # refresh the marketplace cache first
+claude plugin update momo@momo-agent          # then pull the newest plugin version
+```
+
+Restart Claude Code to apply the update.
+
 ## Quick start
 
 ```text

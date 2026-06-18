@@ -31,6 +31,15 @@ claude plugin install momo@momo-agent
 
 新开一个 Claude Code 会话 —— `/momo:*` 命令(以及 `momo` 自然语言触发)即可用。
 
+之后更新到最新版:
+
+```bash
+claude plugin marketplace update momo-agent   # 先刷新 marketplace 缓存
+claude plugin update momo@momo-agent          # 再拉取最新插件版本
+```
+
+重启 Claude Code 生效。
+
 ## 快速上手
 
 ```text
