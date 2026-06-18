@@ -259,6 +259,11 @@ export function validateConfig(config) {
       errors.push(`${tag} must be an object.`);
       continue;
     }
+    // `authMode` is reserved for built-in native providers. A configured provider must not set it,
+    // else it could mark itself native and have momo silently skip its key/base_url.
+    if (prov.authMode !== undefined) {
+      errors.push(`${tag} must not set "authMode" — it is reserved for built-in native providers.`);
+    }
     if (!Array.isArray(prov.protocols) || prov.protocols.length === 0) {
       errors.push(`${tag} must have a non-empty protocols array.`);
     } else {

@@ -50,6 +50,17 @@ test("config validation: a native provider name cannot be shadowed by a config p
     validateConfig(shadow).some((e) => /reserved built-in native provider/.test(e)),
     "defining a provider named codex-native must be rejected"
   );
+
+  // a configured provider must not mark itself native via authMode (would silently skip its key/base_url)
+  const sneaky = {
+    version: 1,
+    providers: { p: { authMode: "native", protocols: ["openai"], base_url: { openai: "https://x" }, api_key: "k" } },
+    models: {},
+  };
+  assert.ok(
+    validateConfig(sneaky).some((e) => /authMode/.test(e)),
+    "a config provider setting authMode must be rejected"
+  );
 });
 
 test("resolveForContinue: legacy native job (native:true, no provider) still resumes keyless", () => {
