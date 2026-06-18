@@ -18,11 +18,8 @@ function renderTable(headers, rows) {
   return out.join("\n");
 }
 
-// /momo:list — model table. models: registry-resolved [{ model, provider, protocols, clients, defaultClient, effort, defaultEffort }]
-export function renderModelList(models) {
-  if (!models || models.length === 0) {
-    return "No models configured yet. Add one with /momo:config.";
-  }
+// One model table (rows + header). models: registry-resolved [{ model, provider, protocols, clients, defaultClient, effort, defaultEffort }]
+function renderModelTable(models) {
   const rows = models.map((m) => {
     const clients = (m.clients ?? [])
       .map((c) => (c === m.defaultClient ? `${c}*` : c))
@@ -33,7 +30,24 @@ export function renderModelList(models) {
     const protocols = Array.isArray(m.protocols) ? m.protocols.join(",") : String(m.protocols ?? "");
     return [m.model, m.provider, protocols, clients, effort];
   });
-  return `${renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows)}\n\n* = default`;
+  return renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows);
+}
+
+// /momo:list — two separate tables: configured (key-based) models and native (keyless) models.
+export function renderModelList(models) {
+  if (!models || models.length === 0) {
+    return "No models configured yet. Add one with /momo:config.";
+  }
+  const configured = models.filter((m) => !m.native);
+  const native = models.filter((m) => m.native);
+  const sections = [];
+  if (configured.length) {
+    sections.push(`Configured models\n${renderModelTable(configured)}`);
+  }
+  if (native.length) {
+    sections.push(`Native models (keyless — your own codex / claude)\n${renderModelTable(native)}`);
+  }
+  return `${sections.join("\n\n")}\n\n* = default`;
 }
 
 // /momo:list — a one-line hint of built-in native providers detected on this machine (client installed)

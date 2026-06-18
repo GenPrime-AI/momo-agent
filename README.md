@@ -139,19 +139,30 @@ It writes `~/.momo/config.json` (plaintext keys — on your machine, never in th
 /momo:list
 ```
 ```text
-MODEL     PROVIDER      PROTOCOL   CLIENTS  EFFORT
---------  ------------  ---------  -------  ----------------
-glm-5.2   zhipu         anthropic  claude*  high*,medium,low
-deepseek  deepseek      anthropic  claude*
-gpt-5.5   codex-native  openai     codex*
-gpt-5.4   codex-native  openai     codex*
+Configured models
+MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
+--------  --------  ---------  -------  ----------------
+glm-5.2   zhipu     anthropic  claude*  high*,medium,low
+deepseek  deepseek  anthropic  claude*
+
+Native models (keyless — your own codex / claude)
+MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
+-------  -------------  ---------  -------  ------
+gpt-5.5  codex-native   openai     codex*
+opus     claude-native  anthropic  claude*
 
 * = default
+```
 
+Two tables: **Configured models** (key-based providers) and **Native models** (keyless — on `codex-native` / `claude-native`, auth inherited from the client). Either table is omitted when empty.
+
+If a native provider is detected on this machine (its client is installed) but has no model yet, a one-line hint names it — pure discovery:
+
+```text
 Native providers available (no key needed): claude-native — add a model on one with /momo:config.
 ```
 
-The table is your configured models (rows on `codex-native` / `claude-native` are keyless — auth inherited from the client). The trailing one-line hint names any native provider **detected on this machine** (its client is installed) that you haven't put a model on yet — pure discovery; hang a model on one and it joins the table, and the hint drops it. When every detected native provider already has a model, there's no hint line at all.
+Hang a model on it and it joins the Native models table; the hint drops it. When every detected native provider already has a model, there's no hint line.
 
 ### `/momo:run` — delegate, non-blocking, notify me when done
 

@@ -139,19 +139,30 @@ momo:  我将保存:<回显结构化配置>,确认?
 /momo:list
 ```
 ```text
-MODEL     PROVIDER      PROTOCOL   CLIENTS  EFFORT
---------  ------------  ---------  -------  ----------------
-glm-5.2   zhipu         anthropic  claude*  high*,medium,low
-deepseek  deepseek      anthropic  claude*
-gpt-5.5   codex-native  openai     codex*
-gpt-5.4   codex-native  openai     codex*
+Configured models
+MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
+--------  --------  ---------  -------  ----------------
+glm-5.2   zhipu     anthropic  claude*  high*,medium,low
+deepseek  deepseek  anthropic  claude*
+
+Native models (keyless — your own codex / claude)
+MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
+-------  -------------  ---------  -------  ------
+gpt-5.5  codex-native   openai     codex*
+opus     claude-native  anthropic  claude*
 
 * = default
+```
 
+两张表:**Configured models**(带 key 的 provider)和 **Native models**(无 key —— 挂在 `codex-native` / `claude-native` 上,认证继承自 client)。哪张空就不显示哪张。
+
+如果某个原生 provider 本机探测到了(对应 client 已装)但还没挂模型,会有一行提示列出它 —— 纯发现:
+
+```text
 Native providers available (no key needed): claude-native — add a model on one with /momo:config.
 ```
 
-表是你配置的模型(provider 为 `codex-native` / `claude-native` 的行无 key,认证继承自 client)。末尾那行提示只列**本机探测到**(对应 client 已装)、但你**还没挂模型**的原生 provider —— 纯发现;挂个模型上去它就进表、提示里也随之去掉。当探测到的原生 provider 都已配了模型,这行提示就不出现。
+挂个模型上去它就进 Native models 表、提示也随之去掉。探测到的原生 provider 都配了模型,就没有这行提示。
 
 ### `/momo:run` —— 委派、不阻塞、跑完通知我
 
