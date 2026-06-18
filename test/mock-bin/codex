@@ -64,12 +64,13 @@ if (process.env.MOCK_TOUCH) {
 }
 
 function emitOkAndExit() {
-  // codex --json style JSONL events; final agent message carries result + session id.
+  // codex --json JSONL events. Real codex carries the resumable id as `thread_id` on a
+  // `thread.started` event (NOT session_id) — mirror that so the adapter's extractSessionId is tested truthfully.
   process.stdout.write(
-    JSON.stringify({ type: "session.created", session_id: sessionId }) + "\n"
+    JSON.stringify({ type: "thread.started", thread_id: sessionId }) + "\n"
   );
   process.stdout.write(
-    JSON.stringify({ type: "agent_message", text: resultText, session_id: sessionId }) + "\n"
+    JSON.stringify({ type: "agent_message", text: resultText }) + "\n"
   );
   process.exit(0);
 }

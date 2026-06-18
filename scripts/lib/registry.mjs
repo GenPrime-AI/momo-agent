@@ -3,27 +3,23 @@
 // No I/O, no validation side effects (validation lives in resolve.mjs).
 
 import { CLIENTS, getClient, knownClientNames } from "./clients/index.mjs";
-import { getNativeModel, nativeModelNames } from "./native.mjs";
+import { getNativeProvider, isNativeProvider } from "./native.mjs";
 
-// Config models first, then built-in native models the user hasn't shadowed.
 export function listModels(config) {
-  const configured = Object.keys(config.models || {});
-  const native = nativeModelNames().filter((n) => !(config.models && config.models[n]));
-  return [...configured, ...native];
+  return Object.keys(config.models || {});
 }
 
-// User config takes precedence; a built-in native model fills in when not configured.
 export function getModel(config, modelName) {
-  return (config.models && config.models[modelName]) || getNativeModel(modelName) || null;
+  return (config.models && config.models[modelName]) || null;
 }
 
-export function isNative(model) {
-  return Boolean(model && model.native);
-}
-
+// Config providers first, then built-in native providers (codex-native / claude-native).
+// Native providers are auto-present so a model can reference one without it being in config.
 export function getProvider(config, providerName) {
-  return (config.providers && config.providers[providerName]) || null;
+  return (config.providers && config.providers[providerName]) || getNativeProvider(providerName) || null;
 }
+
+export { isNativeProvider };
 
 // Provider for a given model name.
 export function providerForModel(config, modelName) {

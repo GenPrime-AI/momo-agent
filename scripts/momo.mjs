@@ -60,7 +60,7 @@ import {
   defaultClient,
   defaultEffortForClient,
   compatibleClients,
-  isNative
+  isNativeProvider
 } from "./lib/registry.mjs";
 import { resolve as resolveExecContext, resolveForContinue, resolveBinary } from "./lib/resolve.mjs";
 import { getClient } from "./lib/clients/index.mjs";
@@ -94,32 +94,18 @@ function resolveModelView(modelName) {
   if (!model) {
     return { model: modelName, provider: "?", protocols: [], clients: [], effort: [] };
   }
-  if (isNative(model)) {
-    const dClient = defaultClient(model);
-    const adapter = dClient ? getClient(dClient) : null;
-    return {
-      model: modelName,
-      provider: "native", // auth inherited from the client (subscription / ambient), no provider
-      protocols: adapter ? [adapter.protocol] : [],
-      clients: Array.isArray(model.clients) ? model.clients : [],
-      defaultClient: dClient,
-      effort: Array.isArray(model.effort) ? model.effort : [],
-      defaultEffort: null, // native never forces a default effort
-      compatibleClients: Array.isArray(model.clients) ? model.clients : [],
-      native: true
-    };
-  }
   const prov = providerForModel(config, modelName);
   const dClient = defaultClient(model);
   return {
     model: modelName,
-    provider: model.provider,
+    provider: model.provider, // native models show their native provider name (codex-native / claude-native)
     protocols: prov && Array.isArray(prov.protocols) ? prov.protocols : [],
     clients: Array.isArray(model.clients) ? model.clients : [],
     defaultClient: dClient,
     effort: Array.isArray(model.effort) ? model.effort : [],
     defaultEffort: dClient ? defaultEffortForClient(model, dClient) : null,
-    compatibleClients: compatibleClients(config, modelName)
+    compatibleClients: compatibleClients(config, modelName),
+    native: isNativeProvider(prov)
   };
 }
 

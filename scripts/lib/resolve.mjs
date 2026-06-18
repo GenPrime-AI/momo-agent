@@ -35,7 +35,7 @@ import {
   compatibleClients,
   clientValidForModel,
   listModels,
-  isNative,
+  isNativeProvider,
 } from "./registry.mjs";
 import { getClient } from "./clients/index.mjs";
 
@@ -90,38 +90,6 @@ export function resolveForContinue(config, base, opts = {}) {
   const env = opts.env || process.env;
   const cwd = base.cwd ? path.resolve(base.cwd) : process.cwd();
 
-  // Native jobs have no provider — auth is inherited from the client, same as the fresh run.
-  if (base.native) {
-    const adapter = getClient(base.client);
-    if (!adapter) {
-      throw new ResolveError("client-invalid", `The original job's client "${base.client}" is unavailable.`);
-    }
-    const binaryPath = resolveBinary(base.client, env);
-    if (!binaryPath) {
-      throw new ResolveError("client-not-installed", `client "${base.client}" is not installed; cannot continue.`);
-    }
-    if (base.effort && !adapter.allowedEffort.has(base.effort)) {
-      throw new ResolveError("effort-invalid", `effort "${base.effort}" is invalid for client "${base.client}".`);
-    }
-    return {
-      model: base.model,
-      modelId: base.model_id ?? null, // native: no pinned model id → client default
-      provider: null,
-      protocol: base.protocol ?? adapter.protocol,
-      client: base.client,
-      adapter,
-      effort: base.effort ?? null,
-      baseUrl: null,
-      apiKey: null,
-      binaryPath,
-      cwd,
-      threadKey: base.thread_key ?? threadKey(cwd, base.model, base.client),
-      wireApi: null,
-      timeoutMs: Number.isFinite(base.timeout_ms) ? base.timeout_ms : null,
-      native: true,
-    };
-  }
-
   const provider = getProvider(config, base.provider);
   if (!provider) {
     throw new ResolveError("provider-missing", `The original job's provider "${base.provider}" no longer exists; cannot continue.`);
@@ -134,17 +102,18 @@ export function resolveForContinue(config, base, opts = {}) {
   if (!Array.isArray(provider.protocols) || !provider.protocols.includes(protocol)) {
     throw new ResolveError("protocol-incompatible", `provider "${base.provider}" no longer supports protocol "${protocol}"; cannot continue.`);
   }
-  const binaryPath = resolveBinary(adapter.binary || base.client, env);
+  const binaryPath = resolveBinary(base.client, env);
   if (!binaryPath) {
     throw new ResolveError("client-not-installed", `client "${base.client}" is not installed; cannot continue.`);
   }
   if (base.effort && !adapter.allowedEffort.has(base.effort)) {
     throw new ResolveError("effort-invalid", `effort "${base.effort}" is invalid for client "${base.client}".`);
   }
-  // Client-auth adapters (e.g. codex-login) use the client's own login → no provider key/base_url.
+  // Native providers (codex-native / claude-native) inherit the client's own auth → no key/base_url.
+  const native = isNativeProvider(provider);
   let baseUrl = null;
   let apiKey = null;
-  if (!adapter.usesClientAuth) {
+  if (!native) {
     baseUrl = provider.base_url && provider.base_url[protocol];
     if (!baseUrl) {
       throw new ResolveError("base-url-missing", `provider "${base.provider}" is missing a base_url for the ${protocol} protocol.`);
@@ -170,75 +139,7 @@ export function resolveForContinue(config, base, opts = {}) {
     threadKey: base.thread_key ?? threadKey(cwd, base.model, base.client),
     wireApi: base.wire_api ?? null,
     timeoutMs: Number.isFinite(base.timeout_ms) ? base.timeout_ms : null,
-    native: false,
-  };
-}
-
-// Native models: auth/endpoint are inherited from the client itself (no provider
-// lookup). We still validate the client (in the model's clients list + installed)
-// and effort (forwarded only when explicitly given — no default is forced).
-function resolveNative({ model, modelDef, opts, env, cwd }) {
-  // client: must be one of the native model's clients (single-client today, but list-safe).
-  let client = opts.client;
-  if (client) {
-    if (!modelDef.clients.includes(client)) {
-      throw new ResolveError(
-        "client-invalid",
-        `client "${client}" is not available for native model "${model}". Available: ${modelDef.clients.join(", ")}.`
-      );
-    }
-  } else {
-    client = modelDef.clients[0];
-  }
-  const adapter = getClient(client);
-  if (!adapter) {
-    throw new ResolveError("client-invalid", `client "${client}" is unknown.`);
-  }
-
-  const binaryPath = resolveBinary(client, env);
-  if (!binaryPath) {
-    throw new ResolveError(
-      "client-not-installed",
-      `native model "${model}" needs the "${client}" CLI, but no executable "${client}" was found on PATH. Install and log in to it first.`
-    );
-  }
-
-  // effort: optional and never defaulted for native — forward only when asked.
-  let effort = opts.effort;
-  if (effort) {
-    const inModel = Array.isArray(modelDef.effort) && modelDef.effort.includes(effort);
-    const legalForClient = adapter.allowedEffort.has(effort);
-    if (!inModel || !legalForClient) {
-      const legal = (modelDef.effort || []).filter((e) => adapter.allowedEffort.has(e));
-      throw new ResolveError(
-        "effort-invalid",
-        `effort "${effort}" is invalid for native model "${model}" + client "${client}". Valid values: ${legal.length ? legal.join(", ") : "(none)"}.`
-      );
-    }
-  } else {
-    effort = null;
-  }
-
-  if (opts.taskPrompt !== undefined && (typeof opts.taskPrompt !== "string" || opts.taskPrompt.trim() === "")) {
-    throw new ResolveError("task-empty", "Task body is empty. Provide the task content after `--`.");
-  }
-
-  return {
-    timeoutMs: null,
-    model,
-    modelId: modelDef.model_id ?? null, // null = let the client use its own default model
-    provider: null,
-    protocol: adapter.protocol,
-    client,
-    adapter,
-    effort,
-    baseUrl: null,
-    apiKey: null,
-    binaryPath,
-    cwd,
-    threadKey: threadKey(cwd, model, client),
-    wireApi: null,
-    native: true,
+    native,
   };
 }
 
@@ -264,11 +165,6 @@ export function resolve(config, opts = {}) {
       "model-unknown",
       `Unknown model "${model}". Known models: ${known.length ? known.join(", ") : "(none — run /momo:config first)"}.`
     );
-  }
-
-  // Native (built-in) model: auth is inherited from the client, no provider/base_url/api_key.
-  if (isNative(modelDef)) {
-    return resolveNative({ model, modelDef, opts, env, cwd });
   }
 
   const providerName = modelDef.provider;
@@ -322,7 +218,7 @@ export function resolve(config, opts = {}) {
   const protocol = adapter.protocol;
 
   // §8.4 — client binary installed?
-  const binaryPath = resolveBinary(adapter.binary || client, env);
+  const binaryPath = resolveBinary(client, env);
   if (!binaryPath) {
     const avail = compatibleClients(config, model).filter((c) => resolveBinary(c, env));
     throw new ResolveError(
@@ -362,11 +258,12 @@ export function resolve(config, opts = {}) {
     effort = null; // model has no effort
   }
 
-  // §8.6 — credentials. A client-auth adapter (e.g. codex-login) uses the client's own
-  // login (e.g. `codex login`), so it needs no provider base_url/api_key.
+  // §8.6 — credentials. A native provider (codex-native / claude-native) inherits the client's
+  // own auth (its session, or a global env), so momo needs no provider base_url/api_key.
+  const native = isNativeProvider(provider);
   let baseUrl = null;
   let apiKey = null;
-  if (!adapter.usesClientAuth) {
+  if (!native) {
     baseUrl = provider.base_url && provider.base_url[protocol];
     if (!baseUrl) {
       throw new ResolveError(
@@ -416,6 +313,6 @@ export function resolve(config, opts = {}) {
     cwd,
     threadKey: threadKey(cwd, model, client),
     wireApi,
-    native: false,
+    native,
   };
 }

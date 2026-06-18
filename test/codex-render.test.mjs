@@ -161,6 +161,18 @@ test("codex parseResult: from a log+JSONL mix, returns only the LAST agent messa
   assert.equal(codex.parseResult(raw), "FINAL ANSWER");
 });
 
+test("codex extractSessionId: reads thread_id from a thread.started event (real codex shape)", () => {
+  const raw = [
+    JSON.stringify({ type: "thread.started", thread_id: "019ed8d0-cc1a-7fd0-a814-47b18f3410e6" }),
+    JSON.stringify({ type: "agent_message", text: "hello" }),
+  ].join("\n");
+  assert.equal(codex.extractSessionId(raw, { sessionId: "fallback" }), "019ed8d0-cc1a-7fd0-a814-47b18f3410e6");
+  // legacy session_id shape still works
+  assert.equal(codex.extractSessionId(JSON.stringify({ session_id: "abc12345" }), {}), "abc12345");
+  // nothing parseable → fall back to ctx.sessionId
+  assert.equal(codex.extractSessionId("no json here", { sessionId: "fb" }), "fb");
+});
+
 test("delegated runs are isolated from local config (claude --bare, codex --ignore-*)", () => {
   const c = claude.buildInvocation({
     taskPrompt: "hi", modelId: "GLM-5.2", baseUrl: "https://b", apiKey: "k",

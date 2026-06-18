@@ -1,37 +1,34 @@
-// native.mjs — built-in "native" models: delegate to a CLI client using whatever
-// auth that client already has on this machine (a subscription OAuth login, or a
-// globally-configured custom provider via env). momo injects NO auth — pure
-// pass-through. These are a worker capability, not user config: they need no
-// provider/api_key/base_url and are not stored in ~/.momo/config.json.
+// native.mjs — built-in "native" providers: a model source whose auth momo does
+// NOT inject. momo passes no api_key / base_url; the client uses whatever it
+// already has on this machine (its own session, or a globally-set env). These
+// providers are auto-present (never written to config) — one per client protocol.
+// A model references one and pins its own model_id to run keyless; you can hang
+// several models on the same native provider (e.g. gpt-5.5 and gpt-5.4 on
+// codex-native) and run them in parallel.
 //
-// A native model:
-//   - has no provider / base_url / api_key (auth is inherited from the client)
-//   - has no pinned model_id by default (the client picks its own default model);
-//     --effort still forwards when given, but no default effort is forced.
+// Availability is the client binary's presence, checked at list/resolve time —
+// a model on codex-native only shows/runs when the `codex` CLI is installed.
+//
+// A native provider: { authMode:"native", protocols:[<the protocol its clients speak>] }.
 
-import { getClient } from "./clients/index.mjs";
-
-// id -> { native:true, clients:[clientName], effort:[...] }. effort lists the client's
-// full vocab so --effort validates; resolve never forces a default for native models.
-export const NATIVE_MODELS = Object.freeze({
-  claude: nativeFor("claude"),
-  codex: nativeFor("codex"),
+export const NATIVE_PROVIDERS = Object.freeze({
+  "codex-native": Object.freeze({ authMode: "native", protocols: ["openai"] }),
+  "claude-native": Object.freeze({ authMode: "native", protocols: ["anthropic"] }),
 });
 
-function nativeFor(clientName) {
-  const adapter = getClient(clientName);
-  const effort = adapter ? [...adapter.allowedEffort] : [];
-  return Object.freeze({ native: true, clients: [clientName], effort });
+export function isNativeProviderName(name) {
+  return Object.prototype.hasOwnProperty.call(NATIVE_PROVIDERS, name);
 }
 
-export function isNativeModelName(name) {
-  return Object.prototype.hasOwnProperty.call(NATIVE_MODELS, name);
+export function getNativeProvider(name) {
+  return isNativeProviderName(name) ? NATIVE_PROVIDERS[name] : null;
 }
 
-export function getNativeModel(name) {
-  return isNativeModelName(name) ? NATIVE_MODELS[name] : null;
+export function nativeProviderNames() {
+  return Object.keys(NATIVE_PROVIDERS);
 }
 
-export function nativeModelNames() {
-  return Object.keys(NATIVE_MODELS);
+// True for a provider object whose auth is inherited from the client (no key injection).
+export function isNativeProvider(provider) {
+  return Boolean(provider && provider.authMode === "native");
 }

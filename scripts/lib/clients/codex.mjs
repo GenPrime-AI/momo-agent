@@ -27,11 +27,10 @@ export default {
   //   wins verbatim, e.g. forcing "chat" for an older codex.
   //   NOTE: a Chat-Completions-only endpoint (no /responses route, e.g. api.xiaomimimo.com/v1) can no longer
   //   be driven by codex on these versions — it returns 404; drive such providers via the anthropic client.
-  //   Native inherits the client's own auth (ChatGPT login) and points at no custom provider.
+  //   Native (codex-native provider) inherits codex's own auth and points at no custom provider.
   buildInvocation({ taskPrompt, modelId, baseUrl, apiKey, effort, sessionId, resume, wireApi, native }) {
-    // Provider overrides (custom endpoint) — proxy path only. Native inherits the client's own
-    // auth (ChatGPT login in $CODEX_HOME/auth.json, kept even under --ignore-user-config), so it
-    // points at no custom provider.
+    // Provider overrides (custom endpoint) — proxy path only. Native inherits codex's own auth
+    // ($CODEX_HOME/auth.json, kept even under --ignore-user-config), so it points at no custom provider.
     const overrides = [];
     if (!native) {
       // Explicit wireApi wins; otherwise default to "responses" (the only value codex >=0.139 accepts).
@@ -103,9 +102,9 @@ export default {
     return meaningful.length ? meaningful.join("\n") : text;
   },
 
-  // For resume we need codex's session/conversation id.
-  //  - --json events carry a session/conversation id;
-  //  - plain output may print "session id: <uuid>".
+  // For resume we need codex's session id. Real codex (>=0.x) emits it as `thread_id`
+  // on a `{"type":"thread.started","thread_id":"<uuid>"}` event; older/other shapes use
+  // session_id / conversation_id. `codex exec resume <id>` accepts this UUID.
   // Prefer a freshly emitted id; otherwise fall back to ctx.sessionId.
   extractSessionId(rawStdout, ctx) {
     const text = (rawStdout || "").trim();
@@ -114,11 +113,11 @@ export default {
         const s = line.trim();
         if (s.startsWith("{")) {
           const obj = tryParse(s);
-          const id = obj && (obj.session_id || obj.conversation_id || (obj.msg && obj.msg.session_id));
+          const id = obj && (obj.thread_id || obj.session_id || obj.conversation_id || (obj.msg && obj.msg.session_id));
           if (typeof id === "string" && id) return id;
         }
       }
-      const m = text.match(/session[_ ]?id[:=]\s*([0-9a-fA-F-]{8,})/);
+      const m = text.match(/(?:thread|session|conversation)[_ ]?id[:=]\s*([0-9a-fA-F-]{8,})/);
       if (m) return m[1];
     }
     return (ctx && ctx.sessionId) || null;

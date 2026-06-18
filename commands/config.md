@@ -31,27 +31,23 @@ Turn the answer into the config-set patch shape (it mirrors `~/.momo/config.json
 
 `clients` and `effort` are ordered — the first entry is the default. `effort` is optional; include it only for models that actually support effort levels. Known clients are `claude` (anthropic protocol) and `codex` (openai protocol), and a model's clients must be drivable by its provider's protocols.
 
-**OpenAI-protocol providers have two auth modes — ask which.** When the user wants to add a provider that speaks the `openai` protocol (driven by `codex`), offer:
+**Native providers — run a client keyless, no api key.** Besides configured (key + endpoint) providers, momo auto-provides two **native providers** that need no config: `codex-native` (openai) and `claude-native` (anthropic). A model on a native provider injects no auth — the client uses whatever it already has on this machine (its own session, or a global env). They appear automatically when the client binary is installed.
 
-1. **Use API** — the standard flow above: collect `base_url` (e.g. `https://api.openai.com/v1`) and `api_key`, with a model whose `clients` include `codex`.
-2. **Use local Codex (login)** — drive `codex` with the user's own `codex login` (ChatGPT/OpenAI) session; **no api key**. First verify the CLI and login:
-   - `codex --version` (if missing, tell the user to install the `codex` CLI and stop).
-   - `codex login status` (if not logged in, ask the user to run `! codex login` in their terminal, then continue).
+Use this when the user wants to run a model through `codex` / `claude` **without** giving momo a key — e.g. "use my Codex for gpt-5.5 and gpt-5.4". You hang one model per `model_id` on the native provider, and they can run in parallel:
 
-   **Pick a `model_id` the login actually supports.** A *ChatGPT-account* login only accepts the model that account is entitled to and **rejects `gpt-5-codex` / `gpt-5` with HTTP 400** ("not supported when using Codex with a ChatGPT account"). Use the model from the user's `~/.codex/config.toml` `model = "…"` line (e.g. `gpt-5.5`), or confirm with `codex exec -m <id> 'say OK'` before saving. (An *API-key* codex login can use `gpt-5-codex` etc.) Set both the momo model name and its `model_id` to that value.
+```jsonc
+{
+  "models": {
+    "gpt-5.5": { "provider": "codex-native", "model_id": "gpt-5.5", "clients": ["codex"] },
+    "gpt-5.4": { "provider": "codex-native", "model_id": "gpt-5.4", "clients": ["codex"] }
+  }
+}
+```
 
-   Then persist a login provider plus a model whose client is `codex-login` (note: **no `api_key`, no `base_url`**; replace `gpt-5.5` with the confirmed model id):
-
-   ```jsonc
-   {
-     "providers": { "codex-local": { "protocols": ["openai"], "auth": "login" } },
-     "models": {
-       "gpt-5.5": { "provider": "codex-local", "model_id": "gpt-5.5", "clients": ["codex-login"] }
-     }
-   }
-   ```
-
-   The `codex-login` client speaks the `openai` protocol and uses the client's own login, so the runtime requires neither a key nor a base_url for it.
+Note: a native-provider model carries **no `api_key`, no `base_url`** — you only write the model (the provider is built-in). Before saving, sanity-check the CLI and a model id:
+- `codex --version` (if missing, tell the user to install the `codex` CLI and stop).
+- Confirm the `model_id` runs: `codex exec -m <id> 'say OK'`. (A ChatGPT-account login accepts only the models that account is entitled to — e.g. `gpt-5.5` / `gpt-5.4` — and rejects others with HTTP 400; pick one that works.)
+- Do not add a native provider to `providers` — it is auto-present; just reference it from the model.
 
 Echo back a readable summary of exactly what will be written and get an explicit yes before writing. If the patch would overwrite a value that already exists, call that out and confirm the overwrite first — to see what's already there, run `momo.mjs list`. Then persist:
 

@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLIENTS } from "./clients/index.mjs";
+import { getNativeProvider } from "./native.mjs";
 
 export const CONFIG_VERSION = 1;
 
@@ -263,26 +264,20 @@ export function validateConfig(config) {
         }
       }
     }
-    // A provider may declare auth:"login" to drive a client via its own login (e.g. codex-login):
-    // such a provider needs neither api_key nor base_url. Any other auth value is rejected.
-    const isLogin = prov.auth === "login";
-    if (prov.auth !== undefined && prov.auth !== "login") {
-      errors.push(`${tag} has unknown auth "${prov.auth}". Only "login" is supported.`);
-    }
-    if (!isLogin) {
-      if (!prov.base_url || typeof prov.base_url !== "object" || Array.isArray(prov.base_url)) {
-        errors.push(`${tag} must have a base_url object (keyed by protocol).`);
-      } else if (Array.isArray(prov.protocols)) {
-        for (const proto of prov.protocols) {
-          const u = prov.base_url[proto];
-          if (!u || typeof u !== "string") {
-            errors.push(`${tag} is missing a base_url for protocol "${proto}".`);
-          }
+    // Configured providers always carry a key + endpoint. (Native providers — codex-native /
+    // claude-native — are auto-present and never written to config, so they don't appear here.)
+    if (!prov.base_url || typeof prov.base_url !== "object" || Array.isArray(prov.base_url)) {
+      errors.push(`${tag} must have a base_url object (keyed by protocol).`);
+    } else if (Array.isArray(prov.protocols)) {
+      for (const proto of prov.protocols) {
+        const u = prov.base_url[proto];
+        if (!u || typeof u !== "string") {
+          errors.push(`${tag} is missing a base_url for protocol "${proto}".`);
         }
       }
-      if (typeof prov.api_key !== "string" || prov.api_key.trim() === "") {
-        errors.push(`${tag} is missing api_key.`);
-      }
+    }
+    if (typeof prov.api_key !== "string" || prov.api_key.trim() === "") {
+      errors.push(`${tag} is missing api_key.`);
     }
   }
 
@@ -293,7 +288,8 @@ export function validateConfig(config) {
       errors.push(`${tag} must be an object.`);
       continue;
     }
-    const prov = providers[model.provider];
+    // A model may reference a configured provider OR a built-in native provider (codex-native / claude-native).
+    const prov = providers[model.provider] || getNativeProvider(model.provider);
     if (!model.provider || typeof model.provider !== "string") {
       errors.push(`${tag} is missing provider.`);
     } else if (!prov) {

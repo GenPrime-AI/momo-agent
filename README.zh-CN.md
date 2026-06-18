@@ -11,7 +11,7 @@
 ## 亮点
 
 - **多厂商一套流程** —— 任何 Anthropic 兼容模型用 `claude` CLI 驱动,任何 OpenAI 兼容模型用 `codex`。配一次,统一用。
-- **内置原生模型,零配置** —— `claude` 和 `codex` 开箱即用,直接复用该 CLI 在你机器上已有的登录态(订阅,或你自己设的全局 env),无需配 provider/key/endpoint。见 [内置原生模型](#内置原生模型)。
+- **原生 provider,无需 key** —— 用 client 在你机器上已有的认证(它自己的会话,或全局 env)跑模型;多个模型挂在一个原生 provider 上(比如 gpt-5.5 + gpt-5.4)可并行。见 [原生 provider](#原生-providerno-key-跑-client)。
 - **两种后台模式** —— 骑 Claude Code 原生后台(`/momo:run`,跑完自动通知)或 momo 自管 job(`/momo:work`,扇出与管理)。
 - **并行扇出** —— 一次性派发多个任务,用 status / result / cancel / continue 管理。
 - **自然语言触发** —— 说"momo …"它就帮你路由,不必打斜杠。
@@ -20,7 +20,7 @@
 
 - [Claude Code](https://code.claude.com)。
 - 你要用的 client CLI:**`claude`**(驱动 Anthropic 协议模型)和/或 **`codex`**(驱动 OpenAI 协议模型)。
-- 你配置的每个**自定义** provider 的 API key。内置原生 `claude` / `codex` 不需要 —— 它们复用 CLI 自己的登录。
+- 每个**已配置** provider 的 API key。挂在**原生 provider**(`codex-native` / `claude-native`)上的模型不需要 —— 复用 client 自己的认证。
 
 ## 安装
 
@@ -34,42 +34,49 @@ claude plugin install momo@momo-agent
 ## 快速上手
 
 ```text
-/momo:run --model claude -- 用 5 条要点总结 ./src 的架构   # 零配置 —— 复用你已有的 claude 登录
-/momo:config                  # 对话式:加自定义 provider/模型(GLM、DeepSeek…)
-/momo:list                    # 看有哪些可用(内置原生 + 你配置的)
-/momo:run --model glm-4.6 -- 用 5 条要点总结 ./src 的架构   # 委派;跑完通知你
+/momo:config                  # 对话式:加模型 —— 已配置的(带 key)或原生的(无 key)
+/momo:list                    # 看你的模型
+/momo:run --model gpt-5.5 -- 用 5 条要点总结 ./src 的架构   # 原生(你的 Codex),无 key
+/momo:run --model glm-4.6 -- 用 5 条要点总结 ./src 的架构   # 已配置 provider;跑完通知你
 ```
 
 ---
 
-## 内置原生模型
+## 原生 provider(无 key 跑 client)
 
-有两个模型无需任何配置就一直存在:
+momo 里的 **provider** 是模型的来源:它回答模型从哪来、怎么认证。普通 provider 是「一把 key + 一个地址」。**原生 provider** 则是 momo **什么都不注入** —— 不给 key、不给地址,client 用它本机已有的那套认证(它自己的会话,或你设的全局 env)。momo 只把这次运行和你的 settings/hooks/CLAUDE.md 隔离开,**绝不碰认证**。
 
-| 模型     | client   | 认证                                       |
-| -------- | -------- | ------------------------------------------ |
-| `claude` | `claude` | `claude` CLI 当前登录的那套                |
-| `codex`  | `codex`  | `codex` CLI 当前登录的那套(需已安装)     |
+内置两个原生 provider,自动存在(永不写进 config),对应 client 装了就出现:
 
-"原生"意味着 momo **什么都不注入** —— 不设 provider、key、endpoint。委派出去的运行**原样继承**该 client 在本机已有的认证:订阅 OAuth 登录,或你通过 env 全局设的自定义供应商。momo 只把这次运行和你的 settings/hooks/CLAUDE.md 隔离开,**绝不碰认证**。
+| Provider        | 协议      | Client   |
+| --------------- | --------- | -------- |
+| `codex-native`  | openai    | `codex`  |
+| `claude-native` | anthropic | `claude` |
 
+provider 你不配 —— 你只把**模型**挂上去,每个 pin 自己的 `model_id`。多个模型可以共用一个原生 provider 并行跑。比如「用我的 Codex 跑 gpt-5.5 和 gpt-5.4」:
+
+```jsonc
+"models": {
+  "gpt-5.5": { "provider": "codex-native", "model_id": "gpt-5.5", "clients": ["codex"] },
+  "gpt-5.4": { "provider": "codex-native", "model_id": "gpt-5.4", "clients": ["codex"] }
+}
+```
 ```text
-/momo:run --model claude -- review 当前分支的 diff,标出有风险的改动
-/momo:run --model claude --effort high -- 给 users 表设计一个迁移方案
+/momo:run --model gpt-5.5 -- ...      # 两个都走你的 Codex 登录、无 key,
+/momo:run --model gpt-5.4 -- ...      # 并行,各跑各的模型
 ```
 
-- 零配置:你自己能用 `claude` / `codex`,momo 就能委派给它们。
-- `codex` 只有在 `codex` CLI 已安装并登录时才出现在 `/momo:list` 里。
-- `--effort` 给了就转发;不给则由 client 用它自己的默认。
-- 如果你配置了一个同名自定义模型,它会覆盖内置的。
+- 无 key:你自己能用 `codex` / `claude`,挂在其原生 provider 上的模型就能用。
+- 挂在 `codex-native` 上的模型,只有 `codex` CLI 装了才出现在 `/momo:list`。
+- model_id 必须是你的 client 接受的(ChatGPT 账号的 Codex 登录只认该账号有权的模型)。
 
-> 注意:原生运行走的是你的订阅/登录,因此共享其速率限制 —— 大量并行原生 job 可能撞限流。
+> 注意:原生运行走的是你自己的会话,因此共享其速率限制 —— 大量并行原生 job 可能撞限流。
 
 ---
 
 ## 配置
 
-只有**自定义供应商**(GLM、DeepSeek、Kimi…)才需要这一步。内置原生 `claude` / `codex` 不用配。
+配两种之一:**已配置 provider**(GLM、DeepSeek、Kimi… —— 带 key + 地址),或**原生 provider 上的模型**(无 key —— 只在 `codex-native` / `claude-native` 上写 model_id)。
 
 `/momo:config` 是**对话式**的,不带参数。直接运行它,momo 会反问你要配什么、一步步引导,你用自然语言逐项回答。它**不预设任何 provider 或模型**,只存你告诉它的。
 
@@ -117,17 +124,17 @@ momo:  我将保存:<回显结构化配置>,确认?
 /momo:list
 ```
 ```text
-MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
---------  --------  ---------  -------  ---------------------------------
-glm-5.2   zhipu     anthropic  claude*  high*,medium,low
-deepseek  deepseek  anthropic  claude*
-claude    native    anthropic  claude*  low,medium,high,xhigh,max
-codex     native    openai     codex*   none,minimal,low,medium,high,xhigh
+MODEL     PROVIDER      PROTOCOL   CLIENTS  EFFORT
+--------  ------------  ---------  -------  ----------------
+glm-5.2   zhipu         anthropic  claude*  high*,medium,low
+deepseek  deepseek      anthropic  claude*
+gpt-5.5   codex-native  openai     codex*
+gpt-5.4   codex-native  openai     codex*
 
 * = default
 ```
 
-`provider: native` 的行是内置模型 —— 零配置,认证继承自 client。
+provider 为 `codex-native` / `claude-native` 的行是无 key 的 —— 认证继承自 client。
 
 ### `/momo:run` —— 委派、不阻塞、跑完通知我
 
@@ -219,7 +226,7 @@ codex     native    openai     codex*   none,minimal,low,medium,high,xhigh
 - **协议层** —— 一个 model 能被某个 client 驱动,当且仅当该 client 会说的协议在 model endpoint 暴露的协议里。GLM 暴露 Anthropic 协议,所以 `claude` CLI 能驱动它(只需配 base_url + key + model)。只支持自家工具协议的模型,就用那个工具驱动(如 OpenAI Responses 用 `codex`)。
 - **应用层** —— slash 命令 + 后台运行时。从 `(model, client, effort)` 解析出一个 job,把 client 作为隔离的 headless 进程起起来,你通过上面的命令交互。
 
-委派运行与你本机配置**隔离**(自定义模型:`claude --bare`;原生模型:`claude --setting-sources "" --strict-mcp-config`,既保 OAuth 登录又跳过 settings/hooks/CLAUDE.md;`codex --ignore-user-config --ignore-rules` 两者通用),并默认 bypass 权限,让 headless 任务能在其工作目录内读写文件。job 在 per-thread **FIFO** 锁下执行(同线程的 continue 按顺序跑),并以可验证的进程身份追踪(被复用的 PID 绝不会误杀无关进程)。
+委派运行与你本机配置**隔离**(已配置模型:`claude --bare`;原生 provider 模型:`claude --setting-sources "" --strict-mcp-config`,既保登录又跳过 settings/hooks/CLAUDE.md;`codex --ignore-user-config --ignore-rules` 两者通用),并默认 bypass 权限,让 headless 任务能在其工作目录内读写文件。job 在 per-thread **FIFO** 锁下执行(同线程的 continue 按顺序跑),并以可验证的进程身份追踪(被复用的 PID 绝不会误杀无关进程)。
 
 > 委派出去的子进程**看不到**你的主对话 —— 它只看到你传进去的任务正文(以及 `/momo:continue` 时它自己的历史线程)。任务需要的上下文请写进任务里,或让它读工作目录下的文件。
 
