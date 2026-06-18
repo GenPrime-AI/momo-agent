@@ -196,19 +196,11 @@ test("hard crash: child SIGKILLed, no terminal state written -> status assessed 
   }
 });
 
-test("timeout: client hangs forever -> runner wall-clock kills it -> status=timeout", async () => {
+test("timeout is OPT-IN: with MOMO_TIMEOUT_MS set, a hanging client is wall-clock killed -> status=timeout", async () => {
   const h = setup();
   try {
-    // Shrink the wall-clock timeout via config so we don't wait 600s.
-    const cfg = sampleConfig();
-    cfg.models["glm-5.2"].timeout_ms = 1200; // not used by resolve, but we override below
-    writeConfigFile(h.momoHome, cfg);
-
-    // The runtime reads timeout from job.timeout_ms (default 600000). We can't
-    // easily inject per-run, so use MOMO_TIMEOUT_MS env override consumed by the
-    // runtime (added for testability). If unsupported, the assessJob wall-clock
-    // path still catches it, but that would also be 600s — so the env override
-    // is the contract being exercised here.
+    // There is no default execution time limit. A cap applies only when opted into — here via the
+    // MOMO_TIMEOUT_MS env override consumed by the runtime.
     const r = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
       home: h.home,
       env: { MOCK_BEHAVIOR: "hang", MOMO_TIMEOUT_MS: "1000" },
@@ -222,6 +214,30 @@ test("timeout: client hangs forever -> runner wall-clock kills it -> status=time
     );
     assert.equal(job.status, "timeout", `expected timeout, got ${job && job.status}`);
     assert.match(job.error || "", /timeout/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("no time limit by default: a hanging client keeps running (no timeout_ms, never auto-killed)", async () => {
+  const h = setup();
+  try {
+    // No MOMO_TIMEOUT_MS and no configured timeout_ms → unlimited. The job persists timeout_ms=null and
+    // stays running; it is NOT killed for "running too long".
+    const r = runMomo(["work", "--model", "glm-5.2", "--", "hang"], {
+      home: h.home,
+      env: { MOCK_BEHAVIOR: "hang" },
+    });
+    const id = parseJobId(r.stdout);
+    const running = await waitForJob(h.momoHome, id, (j) => j.status === "running" && j.pid > 0);
+    assert.equal(running.timeout_ms, null, "no cap is applied by default");
+
+    // Re-assess after a beat — still running, never flipped to timeout.
+    await new Promise((res) => setTimeout(res, 2500));
+    const after = readJobFile(h.momoHome, id);
+    assert.equal(after.status, "running", `expected still running, got ${after && after.status}`);
+
+    runMomo(["cancel", id], { home: h.home }); // clean up the hang
   } finally {
     h.cleanup();
   }

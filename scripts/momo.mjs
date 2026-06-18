@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import {
   assessJob,
   createRunningJob,
-  DEFAULT_TIMEOUT_MS,
   earlierActiveOnThread,
   executionStillLive,
   finalizeJob,
@@ -66,25 +65,28 @@ import { resolve as resolveExecContext, resolveForContinue, resolveBinary } from
 import { getClient } from "./lib/clients/index.mjs";
 
 // Augment resolve()'s execution context into the shape the runtime expects (add timeoutMs).
-// The MOMO_TIMEOUT_MS env var can override the wall-clock limit (for testing/tuning).
+// There is NO default execution time limit — a delegated agent may legitimately run for hours.
+// A cap is applied ONLY when explicitly opted into: the MOMO_TIMEOUT_MS env var, or a per-model/
+// provider `timeout_ms` in config. Otherwise timeoutMs is null = unlimited.
 function resolveContext(opts) {
   const config = loadConfig();
   const ctx = resolveExecContext(config, opts);
-  const envTimeout = Number(process.env.MOMO_TIMEOUT_MS);
-  const timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0
-    ? envTimeout
-    : ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return { ...ctx, timeoutMs };
+  return { ...ctx, timeoutMs: optInTimeout(ctx.timeoutMs) };
 }
 
-// For /momo:continue only: rebuild context from the job's persisted original backend identity (+ timeoutMs fallback).
+// For /momo:continue only: rebuild context from the job's persisted original backend identity.
 function resolveContinueContext(base) {
   const config = loadConfig();
   const ctx = resolveForContinue(config, base);
+  return { ...ctx, timeoutMs: optInTimeout(ctx.timeoutMs) };
+}
+
+// Opt-in execution cap: MOMO_TIMEOUT_MS env wins; else a configured per-model/provider timeout_ms;
+// else null = no limit (the delegated agent runs until it finishes, is canceled, or the session ends).
+function optInTimeout(configuredMs) {
   const envTimeout = Number(process.env.MOMO_TIMEOUT_MS);
-  const timeoutMs =
-    Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return { ...ctx, timeoutMs };
+  if (Number.isFinite(envTimeout) && envTimeout > 0) return envTimeout;
+  return Number.isFinite(configuredMs) && configuredMs > 0 ? configuredMs : null;
 }
 
 // For /momo:list rendering: project from config into the model view render.mjs expects.
@@ -306,17 +308,20 @@ async function cmdRun(argv) {
   child.stdout.on("data", (d) => { stdout = tail(stdout, d.toString(), MAX_STDOUT); });
   child.stderr.on("data", (d) => { stderr = tail(stderr, d.toString(), MAX_STDERR); });
 
+  // No execution time limit by default — only arm a wall-clock kill if a cap was explicitly opted into.
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    terminateProcessTree(child.pid, { signal: "SIGKILL" });
-  }, ctx.timeoutMs);
+  const timer = ctx.timeoutMs
+    ? setTimeout(() => {
+        timedOut = true;
+        terminateProcessTree(child.pid, { signal: "SIGKILL" });
+      }, ctx.timeoutMs)
+    : null;
 
   const exit = await new Promise((resolve) => {
     child.on("close", (code) => resolve({ code }));
     child.on("error", (err) => resolve({ spawnError: err }));
   });
-  clearTimeout(timer);
+  if (timer) clearTimeout(timer);
 
   if (timedOut) {
     fail(`wall-clock timeout (>${Math.round(ctx.timeoutMs / 1000)}s), terminated`);
@@ -512,8 +517,12 @@ async function cmdRunJob(argv) {
 // Execute the entire client run under the thread_key lock (with heartbeat + timeout fallback).
 // Concurrent continues on the same thread_key queue here, preventing the thread history from being corrupted.
 async function runUnderThreadLock(id, job, exec, client) {
-  // Lock wait duration ≥ the max runtime of the preceding base (wall-clock timeout) + 1h buffer; the lock has a "preempt if holder is dead" fallback.
-  const lockWaitMs = Math.max((exec.timeout_ms ?? DEFAULT_TIMEOUT_MS) + 3_600_000, 3_600_000);
+  // A queued continue must wait out the preceding base however long it runs. With a configured cap,
+  // wait that long + 1h buffer; with no cap (default), wait unbounded — the lock still has a
+  // "preempt if the holder is dead" fallback, so a dead base never blocks forever.
+  const lockWaitMs = (Number.isFinite(exec.timeout_ms) && exec.timeout_ms > 0)
+    ? exec.timeout_ms + 3_600_000
+    : Infinity;
 
   // ── FIFO + unified check after acquiring the lock ──
   // Repeatedly contend for the same-thread lock until: this job is still active, and no job on the same
@@ -649,26 +658,30 @@ async function runUnderThreadLock(id, job, exec, client) {
   // must die and close must fire) → status=timeout. Plus a hard-exit fallback: in case close still doesn't fire
   // (e.g. a stdio pipe stuck), after a grace period forcibly write the terminal state, release the thread lock,
   // and exit — never let the runner hold the lock forever / get stuck in running.
+  // No execution time limit by default. A wall-clock kill is armed ONLY when a cap was opted into
+  // (env/config); otherwise the agent runs until it finishes, is canceled, or the session ends.
   let timedOut = false;
   let hardExitTimer = null;
   const timeoutMs = exec.timeout_ms ?? job.timeout_ms;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    terminateProcessTree(child.pid, { signal: "SIGKILL" });
-    hardExitTimer = setTimeout(() => {
-      try {
-        finalizeJob(id, {
-          status: "timeout",
-          error: `wall-clock timeout (>${Math.round(timeoutMs / 1000)}s); still not exited after SIGKILL, forcing finalization`
-        });
-      } catch {
-        /* best effort */
-      }
-      releaseThread();
-      process.exit(0);
-    }, 5000);
-    hardExitTimer.unref?.();
-  }, timeoutMs);
+  const timer = (Number.isFinite(timeoutMs) && timeoutMs > 0)
+    ? setTimeout(() => {
+        timedOut = true;
+        terminateProcessTree(child.pid, { signal: "SIGKILL" });
+        hardExitTimer = setTimeout(() => {
+          try {
+            finalizeJob(id, {
+              status: "timeout",
+              error: `wall-clock timeout (>${Math.round(timeoutMs / 1000)}s); still not exited after SIGKILL, forcing finalization`
+            });
+          } catch {
+            /* best effort */
+          }
+          releaseThread();
+          process.exit(0);
+        }, 5000);
+        hardExitTimer.unref?.();
+      }, timeoutMs)
+    : null;
 
   const exit = await new Promise((resolve) => {
     child.on("close", (code, signal) => resolve({ code, signal }));
@@ -676,7 +689,7 @@ async function runUnderThreadLock(id, job, exec, client) {
   });
 
   clearInterval(hb);
-  clearTimeout(timer);
+  if (timer) clearTimeout(timer);
   if (hardExitTimer) clearTimeout(hardExitTimer);
 
   // All terminal states go through finalizeJob (in-lock, terminal-state guarded, auto-strips _exec).

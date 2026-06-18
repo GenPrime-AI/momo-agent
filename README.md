@@ -256,6 +256,7 @@ Adding a client = adding one adapter file; the registry/runtime don't change.
 
 ## Notes
 
+- **No execution time limit** by default — a delegated agent may run for hours. Jobs end only by finishing, `/momo:cancel`, a crash, or the session closing. Opt into a wall-clock cap per model/provider via a `timeout_ms` (ms) field, or globally with the `MOMO_TIMEOUT_MS` env var.
 - **POSIX-focused** (macOS / Linux): uses process groups, signals and `ps` for liveness/identity. Windows is best-effort.
 - API keys are stored in plaintext in `~/.momo/config.json` on your machine. Rotate keys you've shared.
 - Session ownership uses Claude Code's official `CLAUDE_ENV_FILE` mechanism, so each session's background jobs are reaped on its `SessionEnd`.

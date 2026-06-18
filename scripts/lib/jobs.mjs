@@ -18,7 +18,8 @@ const SEQ_FILE = path.join(MOMO_HOME, "seq");
 
 export const HEARTBEAT_INTERVAL_MS = 5_000; // runner heartbeat interval (≤5s)
 export const HEARTBEAT_STALE_MS = 30_000; // no heartbeat beyond this → suspected stuck
-export const DEFAULT_TIMEOUT_MS = 600_000; // wall-clock fallback upper bound
+// No default execution time limit: a delegated agent may run for hours. A cap applies only when a
+// job carries an explicit timeout_ms (opted into via MOMO_TIMEOUT_MS or a per-model/provider config).
 
 // Terminal state set
 const TERMINAL = new Set(["done", "failed", "timeout", "killed", "crashed"]);
@@ -246,7 +247,7 @@ export function createRunningJob({
   session_id = null,
   claude_session = null,
   cwd,
-  timeout_ms = DEFAULT_TIMEOUT_MS,
+  timeout_ms = null, // no execution time limit by default; only set when a cap is explicitly opted into
   seq = null,
   // Backend identity (durable): continue uses these to lock onto the original backend, immune to later remapping of the model alias.
   provider = null,
@@ -366,12 +367,14 @@ export function assessJob(job, opts = {}) {
     return { ...job, suspectedStuck: false };
   }
 
-  // 1. wall-clock timeout fallback: runner didn't kill itself (maybe the runner is itself stuck/dead) → mark timeout.
-  // Key: **kill the process tree first** before setting terminal state (runner + client, two independent process groups), otherwise when the runner is stuck
-  // we mark the job terminal and clear pid while the client keeps running in the background and the job can no longer be canceled → orphan.
+  // 1. wall-clock timeout fallback — ONLY when a cap was explicitly opted into (job.timeout_ms set).
+  // By default there is no execution time limit, so this check is skipped and a long-running agent is
+  // never killed for "running too long" (it's still killed on crash (#2), cancel, or session end).
+  // When a cap IS set: kill the process tree first (runner + client are independent groups) before marking
+  // terminal, else a stuck runner gets marked terminal while the client keeps running orphaned.
   const startedMs = Date.parse(job.started_at ?? "");
-  const timeoutMs = Number.isFinite(job.timeout_ms) ? job.timeout_ms : DEFAULT_TIMEOUT_MS;
-  if (Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
+  const timeoutMs = job.timeout_ms;
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0 && Number.isFinite(startedMs) && now - startedMs > timeoutMs) {
     terminateTreeIfOurs(job.client_pid, job.client_pid_token, { signal: "SIGKILL" });
     terminateTreeIfOurs(job.pid, job.pid_token, { signal: "SIGKILL" });
     const updated = finalizeJob(job.id, {

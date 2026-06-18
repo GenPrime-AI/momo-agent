@@ -256,6 +256,7 @@ provider 为 `codex-native` / `claude-native` 的行是无 key 的 —— 认证
 
 ## 说明
 
+- **默认不限制执行时长** —— 委派的 agent 可以跑几小时。job 只在跑完、`/momo:cancel`、崩溃或会话关闭时结束。想要墙钟上限可按 model/provider 配 `timeout_ms`(毫秒),或用 `MOMO_TIMEOUT_MS` 环境变量全局设。
 - **面向 POSIX**(macOS / Linux):用进程组、信号、`ps` 做存活/身份判定。Windows 为 best-effort。
 - API key 以明文存于本机 `~/.momo/config.json`。分享过的 key 请及时轮换。
 - session 归属用 Claude Code 官方的 `CLAUDE_ENV_FILE` 机制,每个会话的后台 job 会在其 `SessionEnd` 时清理。
