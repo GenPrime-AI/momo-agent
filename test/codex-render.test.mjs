@@ -203,10 +203,11 @@ test("buildInvocation omits effort when the model has none (effort optional)", (
   assert.doesNotMatch(x.argv.join(" "), /model_reasoning_effort/, "codex must not set effort when there is none");
 });
 
-test("renderModelList marks defaults with *", () => {
+test("renderModelList marks defaults with * and shows MODEL_ID as the first column", () => {
   const out = renderModelList([
     {
       model: "glm-5.2",
+      modelId: "GLM-5.2[1m]",
       provider: "zhipu",
       protocols: ["anthropic", "openai"],
       clients: ["claude", "codex"],
@@ -218,6 +219,9 @@ test("renderModelList marks defaults with *", () => {
   assert.match(out, /claude\*/);
   assert.match(out, /high\*/);
   assert.doesNotMatch(out, /codex\*/);
+  // MODEL_ID is the first column, and the real id is shown
+  assert.match(out, /^MODEL_ID\s+MODEL\s+PROVIDER/m, "MODEL_ID is the first column");
+  assert.match(out, /GLM-5\.2\[1m\]\s+glm-5\.2\s+zhipu/, "real model_id precedes the alias");
 });
 
 test("renderNativeProviders: one-line hint (no table); empty when none detected", () => {

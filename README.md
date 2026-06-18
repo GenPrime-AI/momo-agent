@@ -140,19 +140,21 @@ It writes `~/.momo/config.json` (plaintext keys — on your machine, never in th
 ```
 ```text
 Configured models
-MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
---------  --------  ---------  -------  ----------------
-glm-5.2   zhipu     anthropic  claude*  high*,medium,low
-deepseek  deepseek  anthropic  claude*
+MODEL_ID             MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
+-------------------  --------  --------  ---------  -------  ----------------
+GLM-5.2[1m]          glm-5.2   zhipu     anthropic  claude*  high*,medium,low
+deepseek-v4-pro[1m]  deepseek  deepseek  anthropic  claude*
 
 Native models (keyless — your own codex / claude)
-MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
--------  -------------  ---------  -------  ------
-gpt-5.5  codex-native   openai     codex*
-opus     claude-native  anthropic  claude*
+MODEL_ID         MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
+---------------  -------  -------------  ---------  -------  ------
+gpt-5.5          gpt-5.5  codex-native   openai     codex*
+claude-opus-4-8  opus     claude-native  anthropic  claude*
 
 * = default
 ```
+
+`MODEL_ID` is the real id sent to the client; `MODEL` is your alias (what you pass to `--model`). They can differ (a short alias over a long id) or match.
 
 Two tables: **Configured models** (key-based providers) and **Native models** (keyless — on `codex-native` / `claude-native`, auth inherited from the client). Either table is omitted when empty.
 

@@ -102,6 +102,7 @@ function resolveModelView(modelName) {
   const dClient = defaultClient(model);
   return {
     model: modelName,
+    modelId: model.model_id ?? "", // the real id sent to the client (distinct from the model name/alias)
     provider: model.provider, // native models show their native provider name (codex-native / claude-native)
     protocols: prov && Array.isArray(prov.protocols) ? prov.protocols : [],
     clients: Array.isArray(model.clients) ? model.clients : [],

@@ -140,19 +140,21 @@ momo:  我将保存:<回显结构化配置>,确认?
 ```
 ```text
 Configured models
-MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
---------  --------  ---------  -------  ----------------
-glm-5.2   zhipu     anthropic  claude*  high*,medium,low
-deepseek  deepseek  anthropic  claude*
+MODEL_ID             MODEL     PROVIDER  PROTOCOL   CLIENTS  EFFORT
+-------------------  --------  --------  ---------  -------  ----------------
+GLM-5.2[1m]          glm-5.2   zhipu     anthropic  claude*  high*,medium,low
+deepseek-v4-pro[1m]  deepseek  deepseek  anthropic  claude*
 
 Native models (keyless — your own codex / claude)
-MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
--------  -------------  ---------  -------  ------
-gpt-5.5  codex-native   openai     codex*
-opus     claude-native  anthropic  claude*
+MODEL_ID         MODEL    PROVIDER       PROTOCOL   CLIENTS  EFFORT
+---------------  -------  -------------  ---------  -------  ------
+gpt-5.5          gpt-5.5  codex-native   openai     codex*
+claude-opus-4-8  opus     claude-native  anthropic  claude*
 
 * = default
 ```
+
+`MODEL_ID` 是真正发给 client 的 id;`MODEL` 是你的别名(传给 `--model` 的)。两者可以不同(短别名对长 id)也可以相同。
 
 两张表:**Configured models**(带 key 的 provider)和 **Native models**(无 key —— 挂在 `codex-native` / `claude-native` 上,认证继承自 client)。哪张空就不显示哪张。
 

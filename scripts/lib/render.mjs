@@ -28,9 +28,9 @@ function renderModelTable(models) {
       .map((e) => (e === m.defaultEffort ? `${e}*` : e))
       .join(",");
     const protocols = Array.isArray(m.protocols) ? m.protocols.join(",") : String(m.protocols ?? "");
-    return [m.model, m.provider, protocols, clients, effort];
+    return [m.modelId ?? "", m.model, m.provider, protocols, clients, effort];
   });
-  return renderTable(["MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows);
+  return renderTable(["MODEL_ID", "MODEL", "PROVIDER", "PROTOCOL", "CLIENTS", "EFFORT"], rows);
 }
 
 // /momo:list — two separate tables: configured (key-based) models and native (keyless) models.
